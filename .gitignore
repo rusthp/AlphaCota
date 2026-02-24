@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# AlphaCota Specific
+cota_ai/meus_investimentos.db
+cota_ai/.env
+cota_ai/scripts/
+
+# Streamlit
+.streamlit/
