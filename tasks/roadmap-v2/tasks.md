@@ -47,12 +47,13 @@
 - [x] 2.2.5 Aba "Markowitz — Fronteira Eficiente" no dashboard: scatter RdYlGn, pizzas, tabela
 - [x] 2.2.6 26/26 testes unitários passando (78 acumulado)
 
-### 2.3 Stress Testing
-- [ ] 2.3.1 Criar `core/stress_engine.py`
-- [ ] 2.3.2 Cenário: alta de juros (+2%, +4%)
-- [ ] 2.3.3 Cenário: queda abrupta de mercado (-20%, -40%)
-- [ ] 2.3.4 Cenário: corte de dividendos (-30%, -50%)
-- [ ] 2.3.5 Exibir impacto dos cenários no dashboard
+### ✅ FASE 2.3 — Stress Testing (CONCLUÍDA)
+- [x] 2.3.1 Criar `core/stress_engine.py` com 7 cenários pré-definidos
+- [x] 2.3.2 Choque diferenciado por setor (Papel, Logística, Shopping, Lajes, FoF)
+- [x] 2.3.3 apply_stress_scenario: impacto R$ e % por ativo, patrimônio e dividendos
+- [x] 2.3.4 run_stress_suite: múltiplos cenários ordenados + summarize_stress_suite
+- [x] 2.3.5 Aba "Stress Testing" no dashboard: seletor, barra por ativo, suite completa
+- [x] 2.3.6 21/21 testes unitários passando (99 acumulado)
 
 ---
 

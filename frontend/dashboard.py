@@ -20,6 +20,13 @@ from core.markowitz_engine import (
     compare_strategies,
     format_strategy_report,
 )
+from core.stress_engine import (
+    STRESS_SCENARIOS,
+    run_stress_suite,
+    apply_stress_scenario,
+    summarize_stress_suite,
+    format_stress_report,
+)
 
 st.set_page_config(
     page_title="AlphaCota — Intelligence Dashboard",
@@ -42,16 +49,17 @@ perfil_selecionado = st.sidebar.selectbox(
 )
 aporte_mensal = st.sidebar.number_input("Aporte Mensal (R$)", value=1000.0, step=100.0, min_value=0.0)
 st.sidebar.markdown("---")
-st.sidebar.caption("AlphaCota v2 · Fases 1-2.2 ✅")
+st.sidebar.caption("AlphaCota v2 · Fases 1-2.3 ✅")
 
 # ---------------------------------------------------------------------------
 # Abas principais
 # ---------------------------------------------------------------------------
-tab_projecao, tab_backtest, tab_risco, tab_markowitz = st.tabs([
+tab_projecao, tab_backtest, tab_risco, tab_markowitz, tab_stress = st.tabs([
     "📈 Projeção Futura (Monte Carlo)",
     "🔬 Evidência Histórica (Backtest)",
     "🛡️ Risco & Correlação",
     "🔷 Markowitz — Fronteira Eficiente",
+    "⚡ Stress Testing",
 ])
 
 
@@ -746,5 +754,160 @@ with tab_markowitz:
 
         Configure seus tickers, limites de peso e clique em **Otimizar Carteira**.
         """)
+
+
+# ===========================================================================
+# ABA 5 — STRESS TESTING
+# ===========================================================================
+with tab_stress:
+    st.header("⚡ Stress Testing — E se a crise chegar?")
+    st.markdown(
+        "Aplique cenários econômicos extremos à sua carteira e veja o impacto "
+        "em **patrimônio**, **dividendos** e **risco** antes que o mercado te surpreenda."
+    )
+
+    st.markdown("---")
+
+    # Presets de carteira
+    STRESS_PORTFOLIO_DEFAULT = [
+        {"ticker": "MXRF11", "quantidade": 200, "preco_atual": 10.0,  "dividend_mensal": 0.09},
+        {"ticker": "HGLG11", "quantidade": 15,  "preco_atual": 155.0, "dividend_mensal": 1.10},
+        {"ticker": "XPML11", "quantidade": 100, "preco_atual": 90.0,  "dividend_mensal": 0.65},
+        {"ticker": "KNCR11", "quantidade": 50,  "preco_atual": 97.0,  "dividend_mensal": 0.75},
+    ]
+    STRESS_SECTOR_MAP = {
+        "MXRF11": "Papel (CRI)", "KNCR11": "Papel (CRI)",
+        "HGLG11": "Logística",   "XPLG11": "Logística",
+        "XPML11": "Shopping",    "MALL11": "Shopping",
+        "BRCR11": "Lajes Corp.", "JSRE11": "Lajes Corp.",
+        "BCFF11": "Fundo de Fundos",
+    }
+
+    st.subheader("Configurar Análise")
+    sc1, sc2 = st.columns([2, 1])
+    with sc1:
+        scenario_options = {v["name"]: k for k, v in STRESS_SCENARIOS.items()}
+        selected_name = st.selectbox(
+            "Cenário de Stress",
+            list(scenario_options.keys()),
+            index=2,  # queda_mercado_20 como default
+        )
+        selected_key = scenario_options[selected_name]
+        st.caption(STRESS_SCENARIOS[selected_key]["description"])
+    with sc2:
+        run_all = st.checkbox("Rodar Todos os Cenários", value=False,
+                              help="Compara todos os cenários em um ranking.")
+
+    if st.button("🔴 Aplicar Stress", type="primary", key="btn_stress"):
+        with st.spinner("Aplicando cenário de stress..."):
+            portfolio_stress = STRESS_PORTFOLIO_DEFAULT
+
+            if run_all:
+                suite_results = run_stress_suite(portfolio_stress, STRESS_SECTOR_MAP)
+                summary = summarize_stress_suite(suite_results)
+            else:
+                result = apply_stress_scenario(portfolio_stress, selected_key, STRESS_SECTOR_MAP)
+
+        if run_all:
+            # --- Suite completa ---
+            st.success(f"Suite completa: {summary['n_scenarios']} cenários analisados.")
+
+            s1, s2, s3 = st.columns(3)
+            s1.metric("💀 Pior Cenário", summary["worst_scenario"],
+                      delta=f"{summary['worst_drawdown']*100:.1f}%", delta_color="inverse")
+            s2.metric("📊 Drawdown Médio", f"{summary['avg_drawdown']*100:.1f}%")
+            s3.metric("💰 Corte Médio de DY", f"{summary['avg_div_cut']*100:.1f}%",
+                      delta_color="inverse")
+
+            st.markdown("---")
+            st.subheader("Ranking de Cenários (do mais severo ao mais leve)")
+            df_rank = pd.DataFrame(summary["ranking"])
+            df_rank["drawdown"] = df_rank["drawdown"].map(lambda x: f"{x*100:+.1f}%")
+            df_rank["div_delta"] = df_rank["div_delta"].map(lambda x: f"{x*100:+.1f}%")
+            df_rank.columns = ["Cenário", "Impacto Patrimônio", "Impacto Dividendos"]
+            st.dataframe(df_rank, use_container_width=True, hide_index=True)
+
+            # Gráfico de barras do ranking
+            st.markdown("---")
+            fig_suite, ax_suite = plt.subplots(figsize=(12, 4))
+            bar_data = [(r["scenario"], r["drawdown"] * 100) for r in summary["ranking"]]
+            bar_data.sort(key=lambda x: x[1])
+            names = [b[0].replace(" (", "\n(") for b in bar_data]
+            vals  = [b[1] for b in bar_data]
+            colors = ["#F44336" if v < -15 else "#FF9800" if v < -8 else "#FFC107" for v in vals]
+            ax_suite.barh(names, vals, color=colors)
+            ax_suite.axvline(0, color="white", linewidth=0.8)
+            ax_suite.set_xlabel("Impacto no Patrimônio (%)")
+            ax_suite.set_title("Ranking de Cenários — Impacto Patrimonial")
+            ax_suite.grid(axis="x", alpha=0.3)
+            plt.tight_layout()
+            st.pyplot(fig_suite)
+
+        else:
+            # --- Cenário único ---
+            st.success(f"Cenário aplicado: **{result['scenario_name']}**")
+
+            r1, r2, r3, r4 = st.columns(4)
+            r1.metric("💼 Antes", f"R$ {result['total_antes']:,.0f}")
+            r2.metric("📉 Depois", f"R$ {result['total_depois']:,.0f}",
+                      delta=f"{result['drawdown']*100:+.1f}%", delta_color="inverse")
+            r3.metric("💰 DY Antes", f"R$ {result['dividendos_antes']:.2f}/mês")
+            r4.metric("💰 DY Depois", f"R$ {result['dividendos_depois']:.2f}/mês",
+                      delta=f"{result['dividendos_delta']*100:+.1f}%",
+                      delta_color="inverse" if result['dividendos_delta'] < 0 else "normal")
+
+            st.markdown("---")
+
+            # Gráfico de barras: impacto por ativo
+            assets = result["assets"]
+            tickers_stress = [a["ticker"] for a in assets]
+            impacts = [a["impacto_%"] for a in assets]
+            bar_colors = ["#F44336" if v < 0 else "#4CAF50" for v in impacts]
+
+            fig_s, ax_s = plt.subplots(figsize=(10, 4))
+            ax_s.barh(tickers_stress, impacts, color=bar_colors)
+            ax_s.axvline(0, color="white", linewidth=0.8)
+            ax_s.set_xlabel("Impacto no Valor do Ativo (%)")
+            ax_s.set_title(f"Impacto por Ativo — {result['scenario_name']}")
+            ax_s.grid(axis="x", alpha=0.3)
+            plt.tight_layout()
+            st.pyplot(fig_s)
+
+            # Antes vs Depois por ativo
+            st.markdown("---")
+            st.subheader("Detalhamento por Ativo")
+            df_assets = pd.DataFrame([{
+                "Ticker":         a["ticker"],
+                "Setor":          a["sector"],
+                "Valor Antes":    f"R$ {a['valor_antes']:,.2f}",
+                "Valor Depois":   f"R$ {a['valor_depois']:,.2f}",
+                "Impacto R$":     f"R$ {a['impacto_R$']:,.2f}",
+                "Impacto %":      f"{a['impacto_%']:+.2f}%",
+                "DY Antes":       f"R$ {a['dividendo_antes']:.2f}",
+                "DY Depois":      f"R$ {a['dividendo_depois']:.2f}",
+            } for a in assets])
+            st.dataframe(df_assets, use_container_width=True, hide_index=True)
+
+            with st.expander("📋 Relatório Completo"):
+                st.code(format_stress_report(result), language="")
+
+    else:
+        st.markdown("""
+        ### Cenários Disponíveis
+
+        | Cenário | O que simula |
+        |---|---|
+        | 🟡 Alta de Juros +2% | Selic sobe moderadamente — CRI resistem, Tijolo cai |
+        | 🔴 Alta de Juros +4% | Aperto agressivo — todo o setor imobiliário sofre |
+        | 🟠 Queda de Mercado -20% | Crash moderado — pânico temporário |
+        | 🔴 Queda de Mercado -40% | Crise severa tipo 2008 — liquidez colapsa |
+        | 🟡 Corte de Dividendos -30% | Gestores cortam distribuições |
+        | 🔴 Corte de Dividendos -50% | Crise de caixa generalizada |
+        | 🟡 Vacância em Alta +15pp | FIIs de Tijolo perdem inquilinos, CRI resiste |
+
+        Selecione um cenário acima e clique em **Aplicar Stress**.
+        Ou marque **Rodar Todos** para um ranking comparativo.
+        """)
+
 
 
