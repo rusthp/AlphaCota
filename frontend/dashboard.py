@@ -39,6 +39,13 @@ from core.report_engine import (
     generate_portfolio_csv_download,
     generate_html_download,
 )
+from core.macro_engine import (
+    get_macro_snapshot,
+    calcular_premio_risco_fii,
+    HAS_BCB,
+)
+from core.momentum_engine import rank_by_momentum, top_momentum
+from core.cluster_engine import cluster_portfolio, suggest_diversification
 
 import datetime as _dt
 import io
@@ -201,18 +208,19 @@ st.sidebar.download_button(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.caption("AlphaCota v2 · Fases 1-2.5 ✅")
+st.sidebar.caption("AlphaCota v2 · Fases 1-2.8 ✅")
 
 
 # ---------------------------------------------------------------------------
 # Abas principais
 # ---------------------------------------------------------------------------
-tab_projecao, tab_backtest, tab_risco, tab_markowitz, tab_stress = st.tabs([
+tab_projecao, tab_backtest, tab_risco, tab_markowitz, tab_stress, tab_avancado = st.tabs([
     "📈 Projeção Futura (Monte Carlo)",
     "🔬 Evidência Histórica (Backtest)",
     "🛡️ Risco & Correlação",
     "🔷 Markowitz — Fronteira Eficiente",
     "⚡ Stress Testing",
+    "🧬 Análise Avançada",
 ])
 
 
@@ -1039,4 +1047,163 @@ with tab_stress:
         """)
 
 
+# ===========================================================================
+# ABA 6 — ANÁLISE AVANÇADA (MACRO + MOMENTUM + CLUSTERING)
+# ===========================================================================
+with tab_avancado:
+    st.header("🧬 Análise Avançada")
+    st.markdown(
+        "Combine dados macroeconômicos, ranking de momentum e clustering de FIIs "
+        "para decisões de alocação mais sofisticadas."
+    )
+    st.markdown("---")
+
+    # ── Tickers comuns para toda a aba ──
+    av_tickers_input = st.text_input(
+        "Tickers para análise avançada (separar por vírgula)",
+        value="MXRF11, HGLG11, XPML11, KNCR11, BRCR11, XPLG11",
+        key="av_tickers",
+    )
+    av_tickers = [t.strip().upper() for t in av_tickers_input.split(",") if t.strip()]
+    if st.session_state.get("portfolio_csv"):
+        _av_csv = [a["ticker"] for a in st.session_state["portfolio_csv"]]
+        av_tickers = _av_csv or av_tickers
+
+    # ============================================================
+    # BLOCO 1 — MACRO SNAPSHOT
+    # ============================================================
+    st.subheader("🏛️ Cenário Macro — Selic · CDI · IPCA")
+
+    with st.spinner("Buscando dados macroeconômicos via BCB..."):
+        macro = get_macro_snapshot()
+
+    src_label = "🟢 Banco Central (BCB/SGS)" if macro["fonte_selic"] == "bcb" else "🟡 Fallback (valores históricos)"
+    st.caption(f"Fonte: {src_label} · Referência: {macro['data_ref']}")
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("💰 Selic a.a.", f"{macro['selic_anual']}%")
+    m2.metric("📊 CDI a.a.",   f"{macro['cdi_anual']}%")
+    m3.metric("🔥 IPCA a.a.", f"{macro['ipca_anual']}%")
+    m4.metric(
+        "⚖️ Prêmio de Risco",
+        f"{macro['premio_risco']:+.2f}%",
+        delta="Selic - IPCA",
+        delta_color="normal" if macro["premio_risco"] > 0 else "inverse",
+    )
+
+    st.markdown("---")
+
+    # FII vs CDI
+    st.subheader("📐 Prêmio de Risco por FII vs CDI")
+    dy_por_ticker = st.number_input(
+        "DY anual médio dos seus FIIs (% total da carteira)",
+        value=12.5, step=0.5, min_value=0.0, max_value=30.0,
+        key="av_dy",
+    )
+    premio = calcular_premio_risco_fii(dy_por_ticker, macro)
+    p1, p2, p3 = st.columns(3)
+    p1.metric("DY Anual Carteira", f"{premio['dy_anual_%']:.1f}%")
+    p2.metric("Spread vs CDI", f"{premio['spread_cdi_%']:+.2f}%",
+              delta_color="normal" if premio["spread_cdi_%"] >= 0 else "inverse")
+    p3.metric("Spread vs IPCA", f"{premio['spread_ipca_%']:+.2f}%",
+              delta_color="normal" if premio["spread_ipca_%"] >= 0 else "inverse")
+    st.info(f"Classificação: **{premio['rating']}**")
+
+    st.markdown("---")
+
+    # ============================================================
+    # BLOCO 2 — RANKING DE MOMENTUM
+    # ============================================================
+    st.subheader("🚀 Ranking de Momentum (3m / 6m / 12m)")
+
+    if st.button("📊 Calcular Momentum", key="btn_momentum"):
+        with st.spinner("Buscando retornos e calculando momentum..."):
+            av_returns, av_sources = _cached_returns(
+                tuple(av_tickers), _START_DATE, _END_DATE, _force_refresh
+            )
+            ranking = rank_by_momentum(av_returns)
+
+        n_real_av = sum(1 for s in av_sources.values() if s == "real")
+        badge_av = (
+            f"🟢 {n_real_av}/{len(av_tickers)} tickers com dados reais"
+            if BRIDGE_HAS_YFINANCE else
+            "🟡 Usando dados sintéticos"
+        )
+        st.caption(badge_av)
+
+        if ranking:
+            df_mom = pd.DataFrame(ranking)
+            df_mom.columns = [
+                "Ticker", "Score", "1 mês %", "3 meses %",
+                "6 meses %", "12 meses %", "Classificação",
+            ]
+            # Colorir por score
+            def _color_score(val):
+                try:
+                    v = float(val)
+                    if v > 5:   return "background-color:#1b5e20; color:#fff"
+                    if v > 0:   return "background-color:#2e7d32; color:#fff"
+                    if v > -5:  return "background-color:#e65100; color:#fff"
+                    return "background-color:#b71c1c; color:#fff"
+                except Exception:
+                    return ""
+
+            styled = df_mom.style.applymap(_color_score, subset=["Score"])
+            st.dataframe(styled, use_container_width=True, hide_index=True)
+
+            # Top 3
+            st.subheader("🏆 Top 3 — Maior Momentum")
+            top = ranking[:3]
+            for i, r in enumerate(top, 1):
+                st.markdown(f"**{i}. {r['ticker']}** — {r['classificacao']} · Score: {r['score']:.2f}%")
+    else:
+        st.info("Clique em **📊 Calcular Momentum** para gerar o ranking.")
+
+    st.markdown("---")
+
+    # ============================================================
+    # BLOCO 3 — CLUSTERING
+    # ============================================================
+    st.subheader("🔵 Clustering — FIIs com Perfil Similar")
+    st.markdown("Identifica grupos de FIIs que se comportam de forma parecida — alta correlação implícita.")
+
+    if st.button("🔵 Agrupar FIIs por Perfil", key="btn_cluster"):
+        with st.spinner("Calculando clusters..."):
+            av_returns_cl, av_sources_cl = _cached_returns(
+                tuple(av_tickers), _START_DATE, _END_DATE, _force_refresh
+            )
+            resultado = cluster_portfolio(av_returns_cl)
+            sugestao  = suggest_diversification(resultado)
+
+        st.success(f"🔵 {resultado['k']} clusters encontrados para {len(av_tickers)} ativos")
+
+        for lbl, tickers_cluster in resultado["clusters"].items():
+            nome = resultado.get("cluster_names", {}).get(lbl, f"Cluster {lbl+1}")
+            with st.expander(f"**{nome}** — {len(tickers_cluster)} ativos"):
+                cols = st.columns(len(tickers_cluster) + 1)
+                for i, t in enumerate(tickers_cluster):
+                    feats = resultado["features"].get(t, {})
+                    with cols[i]:
+                        st.metric(t,
+                                  f"{feats.get('retorno_medio', 0)*100:+.2f}%/mês",
+                                  f"Vol: {feats.get('volatilidade', 0)*100:.2f}%")
+
+        st.markdown("---")
+        st.subheader("✅ Carteira Diversificada por Cluster")
+        st.markdown("Um representante por cluster — máxima diversificação real:")
+        sugestao_str = " · ".join(f"**{t}**" for t in sugestao)
+        st.markdown(sugestao_str)
+
+        # Baixar sugestão como CSV
+        sugestao_csv = "ticker,quantidade,preco_medio\n" + "\n".join(
+            f"{t},100,10.0" for t in sugestao
+        )
+        st.download_button(
+            "⬇️ Baixar Sugestão CSV",
+            data=sugestao_csv.encode("utf-8"),
+            file_name="alphacota_diversificada.csv",
+            mime="text/csv",
+        )
+    else:
+        st.info("Clique em **🔵 Agrupar FIIs** para identificar grupos com perfil similar.")
 
