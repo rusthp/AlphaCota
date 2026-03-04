@@ -27,6 +27,19 @@ from core.stress_engine import (
     summarize_stress_suite,
     format_stress_report,
 )
+from data.data_bridge import (
+    load_returns_bulk,
+    build_portfolio_from_tickers,
+    get_data_quality_report,
+    SECTOR_MAP as BRIDGE_SECTOR_MAP,
+    HAS_YFINANCE as BRIDGE_HAS_YFINANCE,
+)
+
+import datetime as _dt
+_today      = _dt.date.today()
+_START_DATE = (_today.replace(year=_today.year - 3)).isoformat()
+_END_DATE   = _today.isoformat()
+
 
 st.set_page_config(
     page_title="AlphaCota — Intelligence Dashboard",
@@ -396,23 +409,6 @@ with tab_risco:
         "e o risco sistêmico. **Alta correlação = diversificação falsa.**"
     )
 
-    # Mapeamento setorial padrão
-    SECTOR_MAP_DEFAULT = {
-        "MXRF11": "Papel (CRI)",
-        "KNCR11": "Papel (CRI)",
-        "RECR11": "Papel (CRI)",
-        "MCCI11": "Papel (CRI)",
-        "HGLG11": "Logística",
-        "XPLG11": "Logística",
-        "BTLG11": "Logística",
-        "XPML11": "Shopping",
-        "MALL11": "Shopping",
-        "VISC11": "Shopping",
-        "BRCR11": "Lajes Corp.",
-        "JSRE11": "Lajes Corp.",
-        "BCFF11": "Fundo de Fundos",
-        "HFOF11": "Fundo de Fundos",
-    }
 
     st.markdown("---")
     st.subheader("Configurar Carteira para Análise")
@@ -432,46 +428,28 @@ with tab_risco:
     tickers_raw = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 
     if st.button("🔍 Analisar Correlações", type="primary", key="btn_corr"):
-        with st.spinner("Calculando correlações..."):
-            import random
+        with st.spinner("Buscando dados e calculando correlações..."):
+            return_series_corr, sources_corr = load_returns_bulk(
+                tickers_raw, _START_DATE, _END_DATE
+            )
 
-            # Dados sintéticos realistas com correlações variadas
-            def _corr_series(n: int, mu: float, sigma: float, seed: int) -> list[float]:
-                random.seed(seed)
-                return [random.gauss(mu, sigma) for _ in range(n)]
-
-            N_MONTHS = 36
-            seeds = {t: i * 17 + 3 for i, t in enumerate(tickers_raw)}
-
-            # Introduzir correlação variada: pares de papel têm alta correlação
-            return_series_corr: dict[str, list[float]] = {}
-            for i, t in enumerate(tickers_raw):
-                base_seed = seeds[t]
-                sector = SECTOR_MAP_DEFAULT.get(t, "Outros")
-                # Mesmo setor → retornos baseados em mesmo seed (correlação alta)
-                if sector == "Papel (CRI)":
-                    base = _corr_series(N_MONTHS, 0.007, 0.025, seed=1)
-                elif sector == "Logística":
-                    base = _corr_series(N_MONTHS, 0.008, 0.030, seed=2)
-                elif sector == "Shopping":
-                    base = _corr_series(N_MONTHS, 0.006, 0.035, seed=3)
-                else:
-                    base = _corr_series(N_MONTHS, 0.007, 0.028, seed=base_seed)
-                # Adicionar ruído idiossincrático
-                noise = _corr_series(N_MONTHS, 0.0, 0.015, seed=base_seed)
-                return_series_corr[t] = [b * 0.7 + n * 0.3 for b, n in zip(base, noise)]
-
-            portfolio_corr = [
-                {"ticker": t, "quantidade": max(1, 100 - i * 15), "preco_atual": 10.0 + i * 30}
-                for i, t in enumerate(tickers_raw)
-            ]
+            portfolio_corr = build_portfolio_from_tickers(tickers_raw)
 
             analysis = analyse_portfolio_risk(
                 portfolio=portfolio_corr,
                 return_series=return_series_corr,
-                sector_map=SECTOR_MAP_DEFAULT,
+                sector_map=BRIDGE_SECTOR_MAP,
                 high_corr_threshold=corr_threshold,
             )
+
+        # Badge de qualidade
+        n_real = sum(1 for s in sources_corr.values() if s == "real")
+        data_badge = (
+            f"🟢 {n_real}/{len(tickers_raw)} tickers com dados reais (yfinance)"
+            if BRIDGE_HAS_YFINANCE else
+            "🟡 Usando dados sintéticos (yfinance não instalado)"
+        )
+        st.info(data_badge)
 
         # ── Métricas principais ──
         st.success("Análise concluída!")
@@ -610,29 +588,10 @@ with tab_markowitz:
         mk_max_w = st.slider("Peso Máximo por Ativo (%)", 25, 100, 50, step=5) / 100.0
 
     if st.button("⚙️ Otimizar Carteira", type="primary", key="btn_markowitz"):
-        with st.spinner(f"Simulando {mk_n_sim:,} portfólios..."):
-            import random as _rnd
-
-            # Dados sintéticos com retornos variados por setor
-            _MK_SECTOR_BASE = {
-                "MXRF11": 7, "KNCR11": 7, "RECR11": 7, "MCCI11": 7, "VRTA11": 7,
-                "HGLG11": 8, "XPLG11": 8, "BTLG11": 8,
-                "XPML11": 6, "MALL11": 6, "VISC11": 6,
-                "BRCR11": 5, "JSRE11": 5,
-                "BCFF11": 7, "HFOF11": 7,
-            }
-
-            def _mk_returns(ticker: str, n: int = 36) -> list[float]:
-                base_mu = _MK_SECTOR_BASE.get(ticker, 7) / 1000.0  # ex: 7 → 0.7%/mês
-                _rnd.seed(hash(ticker) % 9999)
-                sector_factor = _rnd.gauss(1.0, 0.10)
-                returns = []
-                for _ in range(n):
-                    r = _rnd.gauss(base_mu * sector_factor, 0.025)
-                    returns.append(r)
-                return returns
-
-            mk_return_series = {t: _mk_returns(t) for t in mk_tickers}
+        with st.spinner(f"Buscando dados e simulando {mk_n_sim:,} portfólios..."):
+            mk_return_series, mk_sources = load_returns_bulk(
+                mk_tickers, _START_DATE, _END_DATE
+            )
             mk_corr_matrix = build_correlation_matrix(mk_tickers, mk_return_series)
 
             result = compare_strategies(
@@ -645,6 +604,13 @@ with tab_markowitz:
                 max_weight=mk_max_w,
                 seed=42,
             )
+
+        # Badge de qualidade de dados
+        n_real_mk = sum(1 for s in mk_sources.values() if s == "real")
+        st.info(
+            f"🟢 {n_real_mk}/{len(mk_tickers)} tickers com dados reais" if BRIDGE_HAS_YFINANCE
+            else "🟡 Usando dados sintéticos (yfinance não instalado)"
+        )
 
         frontier = result["frontier"]
         ms  = result["max_sharpe"]
@@ -768,20 +734,16 @@ with tab_stress:
 
     st.markdown("---")
 
-    # Presets de carteira
-    STRESS_PORTFOLIO_DEFAULT = [
-        {"ticker": "MXRF11", "quantidade": 200, "preco_atual": 10.0,  "dividend_mensal": 0.09},
-        {"ticker": "HGLG11", "quantidade": 15,  "preco_atual": 155.0, "dividend_mensal": 1.10},
-        {"ticker": "XPML11", "quantidade": 100, "preco_atual": 90.0,  "dividend_mensal": 0.65},
-        {"ticker": "KNCR11", "quantidade": 50,  "preco_atual": 97.0,  "dividend_mensal": 0.75},
-    ]
-    STRESS_SECTOR_MAP = {
-        "MXRF11": "Papel (CRI)", "KNCR11": "Papel (CRI)",
-        "HGLG11": "Logística",   "XPLG11": "Logística",
-        "XPML11": "Shopping",    "MALL11": "Shopping",
-        "BRCR11": "Lajes Corp.", "JSRE11": "Lajes Corp.",
-        "BCFF11": "Fundo de Fundos",
-    }
+    # Tickers e carteira via data_bridge
+    stress_tickers_default = "MXRF11, HGLG11, XPML11, KNCR11"
+    stress_tk_input = st.text_input(
+        "Tickers da carteira para stress",
+        value=stress_tickers_default,
+        key="stress_tickers",
+    )
+    stress_ticker_list = [t.strip().upper() for t in stress_tk_input.split(",") if t.strip()]
+
+    STRESS_QUANTITIES = {"MXRF11": 200, "HGLG11": 15, "XPML11": 100, "KNCR11": 50}
 
     st.subheader("Configurar Análise")
     sc1, sc2 = st.columns([2, 1])
@@ -799,14 +761,22 @@ with tab_stress:
                               help="Compara todos os cenários em um ranking.")
 
     if st.button("🔴 Aplicar Stress", type="primary", key="btn_stress"):
-        with st.spinner("Aplicando cenário de stress..."):
-            portfolio_stress = STRESS_PORTFOLIO_DEFAULT
+        with st.spinner("Buscando preços reais e aplicando cenário de stress..."):
+            portfolio_stress = build_portfolio_from_tickers(
+                stress_ticker_list, STRESS_QUANTITIES
+            )
+            badge_stress = (
+                f"🟢 Preços e dividendos reais via yfinance" if BRIDGE_HAS_YFINANCE
+                else "🟡 Usando preços e dividendos de fallback (yfinance não instalado)"
+            )
 
             if run_all:
-                suite_results = run_stress_suite(portfolio_stress, STRESS_SECTOR_MAP)
+                suite_results = run_stress_suite(portfolio_stress, BRIDGE_SECTOR_MAP)
                 summary = summarize_stress_suite(suite_results)
             else:
-                result = apply_stress_scenario(portfolio_stress, selected_key, STRESS_SECTOR_MAP)
+                result = apply_stress_scenario(portfolio_stress, selected_key, BRIDGE_SECTOR_MAP)
+
+        st.info(badge_stress)
 
         if run_all:
             # --- Suite completa ---
