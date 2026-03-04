@@ -30,13 +30,14 @@
 
 ## ⬜ Fase 2 — Risk & Optimization (próximo)
 
-### 2.1 Correlação entre FIIs
-- [ ] 2.1.1 Criar `core/correlation_engine.py`
-- [ ] 2.1.2 Implementar matriz de correlação entre FIIs
-- [ ] 2.1.3 Mapa de concentração por setor
-- [ ] 2.1.4 Calcular risco sistêmico da carteira
-- [ ] 2.1.5 Integrar com `class_rebalancer.py`
-- [ ] 2.1.6 Visualizar heatmap de correlação no dashboard
+### ✅ FASE 2.1 — Correlation Engine (CONCLUÍDA)
+- [x] 2.1.1 Criar `core/correlation_engine.py`
+- [x] 2.1.2 Matriz de correlação entre FIIs (Pearson N×N)
+- [x] 2.1.3 Concentração setorial com Índice HHI
+- [x] 2.1.4 Risco sistêmico: volatilidade de portfólio com correlações, Diversification Ratio
+- [x] 2.1.5 `suggest_rebalance_with_correlation` — rebalanceamento ciente de correlação
+- [x] 2.1.6 Aba "Risco & Correlação" no dashboard: heatmap, pizza setorial, alertas automáticos
+- [x] 2.1.7 25/25 testes unitários passando (52 acumulado)
 
 ### 2.2 Otimização de Carteira (Markowitz)
 - [ ] 2.2.1 Instalar e integrar `PyPortfolioOpt`

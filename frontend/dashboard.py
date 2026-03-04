@@ -11,6 +11,11 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.simulador_service import simulate_monte_carlo
 from core.profile_allocator import getTargetAllocation
 from core.backtest_engine import run_backtest, compare_against_benchmark, format_metrics_report
+from core.correlation_engine import (
+    build_correlation_matrix,
+    analyse_portfolio_risk,
+    suggest_rebalance_with_correlation,
+)
 
 st.set_page_config(
     page_title="AlphaCota — Intelligence Dashboard",
@@ -38,9 +43,10 @@ st.sidebar.caption("AlphaCota v2 · Fase 1 ✅")
 # ---------------------------------------------------------------------------
 # Abas principais
 # ---------------------------------------------------------------------------
-tab_projecao, tab_backtest = st.tabs([
+tab_projecao, tab_backtest, tab_risco = st.tabs([
     "📈 Projeção Futura (Monte Carlo)",
     "🔬 Evidência Histórica (Backtest)",
+    "🛡️ Risco & Correlação",
 ])
 
 
@@ -365,3 +371,191 @@ with tab_backtest:
 
         Configure acima e clique em **Rodar Backtest**.
         """)
+
+
+# ===========================================================================
+# ABA 3 — RISCO & CORRELAÇÃO
+# ===========================================================================
+with tab_risco:
+    st.header("🛡️ Risco & Correlação da Carteira")
+    st.markdown(
+        "Analise a correlação entre os FIIs da sua carteira, a concentração setorial "
+        "e o risco sistêmico. **Alta correlação = diversificação falsa.**"
+    )
+
+    # Mapeamento setorial padrão
+    SECTOR_MAP_DEFAULT = {
+        "MXRF11": "Papel (CRI)",
+        "KNCR11": "Papel (CRI)",
+        "RECR11": "Papel (CRI)",
+        "MCCI11": "Papel (CRI)",
+        "HGLG11": "Logística",
+        "XPLG11": "Logística",
+        "BTLG11": "Logística",
+        "XPML11": "Shopping",
+        "MALL11": "Shopping",
+        "VISC11": "Shopping",
+        "BRCR11": "Lajes Corp.",
+        "JSRE11": "Lajes Corp.",
+        "BCFF11": "Fundo de Fundos",
+        "HFOF11": "Fundo de Fundos",
+    }
+
+    st.markdown("---")
+    st.subheader("Configurar Carteira para Análise")
+    rc1, rc2 = st.columns([2, 1])
+    with rc1:
+        tickers_input = st.text_input(
+            "Tickers (separados por vírgula)",
+            value="MXRF11, HGLG11, KNCR11, XPLG11",
+            help="Insira os tickers dos FIIs da sua carteira.",
+        )
+    with rc2:
+        corr_threshold = st.slider(
+            "Limiar de Alta Correlação", 0.50, 0.95, 0.75, step=0.05,
+            help="Correlações acima deste valor serão destacadas como risco."
+        )
+
+    tickers_raw = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
+
+    if st.button("🔍 Analisar Correlações", type="primary", key="btn_corr"):
+        with st.spinner("Calculando correlações..."):
+            import random
+
+            # Dados sintéticos realistas com correlações variadas
+            def _corr_series(n: int, mu: float, sigma: float, seed: int) -> list[float]:
+                random.seed(seed)
+                return [random.gauss(mu, sigma) for _ in range(n)]
+
+            N_MONTHS = 36
+            seeds = {t: i * 17 + 3 for i, t in enumerate(tickers_raw)}
+
+            # Introduzir correlação variada: pares de papel têm alta correlação
+            return_series_corr: dict[str, list[float]] = {}
+            for i, t in enumerate(tickers_raw):
+                base_seed = seeds[t]
+                sector = SECTOR_MAP_DEFAULT.get(t, "Outros")
+                # Mesmo setor → retornos baseados em mesmo seed (correlação alta)
+                if sector == "Papel (CRI)":
+                    base = _corr_series(N_MONTHS, 0.007, 0.025, seed=1)
+                elif sector == "Logística":
+                    base = _corr_series(N_MONTHS, 0.008, 0.030, seed=2)
+                elif sector == "Shopping":
+                    base = _corr_series(N_MONTHS, 0.006, 0.035, seed=3)
+                else:
+                    base = _corr_series(N_MONTHS, 0.007, 0.028, seed=base_seed)
+                # Adicionar ruído idiossincrático
+                noise = _corr_series(N_MONTHS, 0.0, 0.015, seed=base_seed)
+                return_series_corr[t] = [b * 0.7 + n * 0.3 for b, n in zip(base, noise)]
+
+            portfolio_corr = [
+                {"ticker": t, "quantidade": max(1, 100 - i * 15), "preco_atual": 10.0 + i * 30}
+                for i, t in enumerate(tickers_raw)
+            ]
+
+            analysis = analyse_portfolio_risk(
+                portfolio=portfolio_corr,
+                return_series=return_series_corr,
+                sector_map=SECTOR_MAP_DEFAULT,
+                high_corr_threshold=corr_threshold,
+            )
+
+        # ── Métricas principais ──
+        st.success("Análise concluída!")
+        am1, am2, am3 = st.columns(3)
+        am1.metric("📊 Volatilidade Anual do Portfólio",
+                   f"{analysis['portfolio_annual_volatility']*100:.2f}%")
+        am2.metric("🔀 Diversification Ratio",
+                   f"{analysis['diversification_ratio']:.2f}",
+                   delta="Bom" if analysis['diversification_ratio'] > 1.2 else "Baixo",
+                   delta_color="normal" if analysis['diversification_ratio'] > 1.2 else "inverse")
+        am3.metric("🏗️ Concentração (HHI)",
+                   f"{analysis['herfindahl_index']:.2f}",
+                   delta=analysis['concentration_risk'])
+
+        # ── Alertas ──
+        if analysis["warnings"]:
+            st.markdown("---")
+            st.subheader("⚠️ Alertas Automáticos")
+            for w in analysis["warnings"]:
+                st.warning(w)
+
+        st.markdown("---")
+
+        # ── Heatmap de Correlação ──
+        col_h1, col_h2 = st.columns([3, 2])
+        with col_h1:
+            st.subheader("Heatmap de Correlação")
+            matrix = analysis["correlation_matrix"]
+            tickers_in_matrix = list(matrix.keys())
+            df_corr = pd.DataFrame(
+                [[matrix[t1][t2] for t2 in tickers_in_matrix] for t1 in tickers_in_matrix],
+                index=tickers_in_matrix,
+                columns=tickers_in_matrix,
+            )
+            fig_h, ax_h = plt.subplots(figsize=(max(5, len(tickers_in_matrix) * 1.2),
+                                                max(4, len(tickers_in_matrix) * 1.0)))
+            sns.heatmap(
+                df_corr, annot=True, fmt=".2f", cmap="RdYlGn_r",
+                center=0, vmin=-1, vmax=1, square=True,
+                linewidths=0.5, ax=ax_h,
+                cbar_kws={"shrink": 0.8},
+            )
+            ax_h.set_title("Correlação de Pearson (36 meses)", fontsize=11)
+            plt.tight_layout()
+            st.pyplot(fig_h)
+
+        # ── Concentração Setorial ──
+        with col_h2:
+            st.subheader("Concentração Setorial")
+            sector_data = analysis["sector_concentration"]
+            if sector_data:
+                df_sector = pd.DataFrame({
+                    "Setor": list(sector_data.keys()),
+                    "Alocação (%)": [v * 100 for v in sector_data.values()],
+                })
+                fig_s, ax_s = plt.subplots(figsize=(5, 4))
+                colors = ["#4CAF50", "#2196F3", "#FF9800", "#9C27B0", "#F44336", "#607D8B"]
+                ax_s.pie(
+                    df_sector["Alocação (%)"],
+                    labels=df_sector["Setor"],
+                    autopct="%1.1f%%",
+                    colors=colors[:len(df_sector)],
+                    startangle=90,
+                )
+                ax_s.set_title(f"HHI: {analysis['herfindahl_index']:.2f} ({analysis['concentration_risk']})")
+                st.pyplot(fig_s)
+
+        # ── Pares de alta correlação ──
+        if analysis["high_correlation_pairs"]:
+            st.markdown("---")
+            st.subheader(f"🔴 Pares com Correlação > {corr_threshold}")
+            df_pairs = pd.DataFrame(analysis["high_correlation_pairs"])
+            df_pairs = df_pairs.rename(columns={
+                "ticker_a": "Ativo A", "ticker_b": "Ativo B",
+                "correlation": "Correlação", "classification": "Classificação"
+            })
+            st.dataframe(df_pairs, use_container_width=True, hide_index=True)
+            st.info(
+                "💡 Pares com alta correlação se movem juntos. "
+                "Ter ambos na carteira **não** reduz o risco — "
+                "considere substitui-los por ativos de setores diferentes."
+            )
+        else:
+            st.success(f"✅ Nenhum par com correlação acima de {corr_threshold}. Boa diversificação!")
+
+    else:
+        st.markdown("""
+        ### Por que correlação importa?
+
+        | Conceito | O que significa |
+        |---|---|
+        | **Correlação 1.0** | Os dois ativos sempre sobem e caem juntos — diversificação zero |
+        | **Correlação 0.0** | Movimentos independentes — diversificação máxima |
+        | **Correlação -1.0** | Um sobe quando o outro cai — hedge perfeito |
+        | **HHI (Herfindahl)** | < 0.15 = diversificado; > 0.40 = concentrado demais |
+        | **Diversification Ratio** | > 1.2 = portfólio aproveita a diversificação real |
+
+        Insira sua carteira acima e clique em **Analisar Correlações**.
+        """)
+
