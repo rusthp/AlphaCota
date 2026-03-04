@@ -39,12 +39,13 @@
 - [x] 2.1.6 Aba "Risco & Correlação" no dashboard: heatmap, pizza setorial, alertas automáticos
 - [x] 2.1.7 25/25 testes unitários passando (52 acumulado)
 
-### 2.2 Otimização de Carteira (Markowitz)
-- [ ] 2.2.1 Instalar e integrar `PyPortfolioOpt`
-- [ ] 2.2.2 Implementar Mean-Variance Optimization
-- [ ] 2.2.3 Simulação Monte Carlo de portfólio (otimização, diferente do atual)
-- [ ] 2.2.4 Calcular fronteira eficiente
-- [ ] 2.2.5 Expor Max Sharpe e Min Volatility como estratégias selecionáveis no dashboard
+### ✅ FASE 2.2 — Markowitz + Fronteira Eficiente (CONCLUÍDA)
+- [x] 2.2.1 Criar `core/markowitz_engine.py` (Python puro, sem deps externas)
+- [x] 2.2.2 Retorno/volatilidade esperados e volatilidade matricial com correlações
+- [x] 2.2.3 Monte Carlo de N portfólios (simulate_portfolio_frontier)
+- [x] 2.2.4 Max Sharpe + Min Volatility + Equal Weight como baseline
+- [x] 2.2.5 Aba "Markowitz — Fronteira Eficiente" no dashboard: scatter RdYlGn, pizzas, tabela
+- [x] 2.2.6 26/26 testes unitários passando (78 acumulado)
 
 ### 2.3 Stress Testing
 - [ ] 2.3.1 Criar `core/stress_engine.py`

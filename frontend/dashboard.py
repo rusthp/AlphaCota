@@ -16,6 +16,10 @@ from core.correlation_engine import (
     analyse_portfolio_risk,
     suggest_rebalance_with_correlation,
 )
+from core.markowitz_engine import (
+    compare_strategies,
+    format_strategy_report,
+)
 
 st.set_page_config(
     page_title="AlphaCota — Intelligence Dashboard",
@@ -38,15 +42,16 @@ perfil_selecionado = st.sidebar.selectbox(
 )
 aporte_mensal = st.sidebar.number_input("Aporte Mensal (R$)", value=1000.0, step=100.0, min_value=0.0)
 st.sidebar.markdown("---")
-st.sidebar.caption("AlphaCota v2 · Fase 1 ✅")
+st.sidebar.caption("AlphaCota v2 · Fases 1-2.2 ✅")
 
 # ---------------------------------------------------------------------------
 # Abas principais
 # ---------------------------------------------------------------------------
-tab_projecao, tab_backtest, tab_risco = st.tabs([
+tab_projecao, tab_backtest, tab_risco, tab_markowitz = st.tabs([
     "📈 Projeção Futura (Monte Carlo)",
     "🔬 Evidência Histórica (Backtest)",
     "🛡️ Risco & Correlação",
+    "🔷 Markowitz — Fronteira Eficiente",
 ])
 
 
@@ -558,4 +563,188 @@ with tab_risco:
 
         Insira sua carteira acima e clique em **Analisar Correlações**.
         """)
+
+
+# ===========================================================================
+# ABA 4 — MARKOWITZ: FRONTEIRA EFICIENTE
+# ===========================================================================
+with tab_markowitz:
+    st.header("🔷 Markowitz — Fronteira Eficiente")
+    st.markdown(
+        "Simula milhares de combinações de pesos e encontra a **carteira ótima** "
+        "que maximiza o Sharpe ou minimiza a volatilidade."
+    )
+
+    st.info(
+        "🧠 **Sem PyPortfolioOpt.** Implementação própria em Python puro usando "
+        "Monte Carlo de pesos (3 000 portfólios simulados)."
+    )
+
+    st.markdown("---")
+    mk1, mk2, mk3 = st.columns(3)
+    with mk1:
+        mk_tickers_input = st.text_input(
+            "Tickers para otimizar",
+            value="MXRF11, HGLG11, KNCR11, XPLG11",
+            key="mk_tickers",
+        )
+    with mk2:
+        mk_n_sim = st.slider("Portfólios Simulados", 500, 5000, 2000, step=500, key="mk_nsim")
+    with mk3:
+        mk_rf = st.number_input("Taxa Livre de Risco (%/ano)", value=10.75, step=0.25) / 100.0
+
+    mk_tickers = [t.strip().upper() for t in mk_tickers_input.split(",") if t.strip()]
+
+    mk_col_w1, mk_col_w2 = st.columns(2)
+    with mk_col_w1:
+        mk_min_w = st.slider("Peso Mínimo por Ativo (%)", 0, 20, 2, step=1) / 100.0
+    with mk_col_w2:
+        mk_max_w = st.slider("Peso Máximo por Ativo (%)", 25, 100, 50, step=5) / 100.0
+
+    if st.button("⚙️ Otimizar Carteira", type="primary", key="btn_markowitz"):
+        with st.spinner(f"Simulando {mk_n_sim:,} portfólios..."):
+            import random as _rnd
+
+            # Dados sintéticos com retornos variados por setor
+            _MK_SECTOR_BASE = {
+                "MXRF11": 7, "KNCR11": 7, "RECR11": 7, "MCCI11": 7, "VRTA11": 7,
+                "HGLG11": 8, "XPLG11": 8, "BTLG11": 8,
+                "XPML11": 6, "MALL11": 6, "VISC11": 6,
+                "BRCR11": 5, "JSRE11": 5,
+                "BCFF11": 7, "HFOF11": 7,
+            }
+
+            def _mk_returns(ticker: str, n: int = 36) -> list[float]:
+                base_mu = _MK_SECTOR_BASE.get(ticker, 7) / 1000.0  # ex: 7 → 0.7%/mês
+                _rnd.seed(hash(ticker) % 9999)
+                sector_factor = _rnd.gauss(1.0, 0.10)
+                returns = []
+                for _ in range(n):
+                    r = _rnd.gauss(base_mu * sector_factor, 0.025)
+                    returns.append(r)
+                return returns
+
+            mk_return_series = {t: _mk_returns(t) for t in mk_tickers}
+            mk_corr_matrix = build_correlation_matrix(mk_tickers, mk_return_series)
+
+            result = compare_strategies(
+                tickers=mk_tickers,
+                return_series=mk_return_series,
+                correlation_matrix=mk_corr_matrix,
+                n_simulations=mk_n_sim,
+                risk_free_rate=mk_rf,
+                min_weight=mk_min_w,
+                max_weight=mk_max_w,
+                seed=42,
+            )
+
+        frontier = result["frontier"]
+        ms  = result["max_sharpe"]
+        mv  = result["min_volatility"]
+        ew  = result["equal_weight"]
+
+        st.success(f"Otimização concluída! {len(frontier):,} portfólios avaliados.")
+
+        # ── Métricas top ──
+        met1, met2, met3 = st.columns(3)
+        met1.metric("🥇 Max Sharpe",
+                    f"Sharpe {ms['sharpe']:.3f}",
+                    delta=f"Ret {ms['return']*100:.2f}% | Vol {ms['volatility']*100:.2f}%")
+        met2.metric("🛡️ Min Volatility",
+                    f"Vol {mv['volatility']*100:.2f}%",
+                    delta=f"Ret {mv['return']*100:.2f}% | Sharpe {mv['sharpe']:.3f}")
+        met3.metric("⚖️ Equal Weight (base)",
+                    f"Sharpe {ew['sharpe']:.3f}",
+                    delta=f"Ret {ew['return']*100:.2f}% | Vol {ew['volatility']*100:.2f}%",
+                    delta_color="off")
+
+        st.markdown("---")
+
+        # ── Scatter — Fronteira Eficiente ──
+        st.subheader("Nuvem de Portfólios — Fronteira de Eficiência")
+
+        vols_all    = [p["volatility"] * 100 for p in frontier]
+        rets_all    = [p["return"]     * 100 for p in frontier]
+        sharpes_all = [p["sharpe"]           for p in frontier]
+
+        fig_mk, ax_mk = plt.subplots(figsize=(12, 6))
+        sc = ax_mk.scatter(
+            vols_all, rets_all,
+            c=sharpes_all, cmap="RdYlGn",
+            alpha=0.45, s=12, zorder=2,
+        )
+        plt.colorbar(sc, ax=ax_mk, label="Sharpe Ratio")
+
+        # Marcar estratégias especiais
+        for p, color, marker, label in [
+            (ms, "#1565C0", "*", f"Max Sharpe ({ms['sharpe']:.2f})"),
+            (mv, "#6A1B9A", "D", f"Min Volatility ({mv['volatility']*100:.1f}%)"),
+            (ew, "#E65100", "P", f"Equal Weight ({ew['sharpe']:.2f})"),
+        ]:
+            ax_mk.scatter(
+                p["volatility"] * 100, p["return"] * 100,
+                color=color, marker=marker, s=250, zorder=5, label=label,
+                edgecolors="white", linewidths=0.8,
+            )
+
+        ax_mk.set_xlabel("Volatilidade Anual (%)")
+        ax_mk.set_ylabel("Retorno Esperado Anual (%)")
+        ax_mk.set_title("Fronteira Eficiente de Markowitz (Monte Carlo de pesos)")
+        ax_mk.legend(loc="upper left")
+        ax_mk.grid(alpha=0.25)
+        plt.tight_layout()
+        st.pyplot(fig_mk)
+
+        st.markdown("---")
+
+        # ── Tabela comparativa ──
+        st.subheader("Comparação das Estratégias")
+        df_strat = pd.DataFrame({
+            "Estratégia": ["Max Sharpe", "Min Volatility", "Equal Weight"],
+            "Retorno a.a.": [f"{p['return']*100:.2f}%" for p in [ms, mv, ew]],
+            "Volatilidade a.a.": [f"{p['volatility']*100:.2f}%" for p in [ms, mv, ew]],
+            "Sharpe Ratio": [f"{p['sharpe']:.3f}" for p in [ms, mv, ew]],
+        })
+        st.dataframe(df_strat, use_container_width=True, hide_index=True)
+
+        # ── Pesos por estratégia ──
+        st.markdown("---")
+        st.subheader("Distribuição de Pesos por Estratégia")
+        pw1, pw2, pw3 = st.columns(3)
+
+        def _pie_chart(strategy: dict, title: str, ax_target):
+            weights = strategy.get("weights", {})
+            labels = list(weights.keys())
+            sizes  = [weights[t] * 100 for t in labels]
+            colors = ["#4CAF50", "#2196F3", "#FF9800", "#9C27B0", "#F44336", "#607D8B"]
+            ax_target.pie(sizes, labels=labels, autopct="%1.1f%%",
+                          colors=colors[:len(labels)], startangle=90)
+            ax_target.set_title(title, fontsize=9)
+
+        fig_pw, axes = plt.subplots(1, 3, figsize=(12, 4))
+        _pie_chart(ms, "Max Sharpe", axes[0])
+        _pie_chart(mv, "Min Volatility", axes[1])
+        _pie_chart(ew, "Equal Weight", axes[2])
+        plt.tight_layout()
+        st.pyplot(fig_pw)
+
+        # ── Relatório ──
+        with st.expander("📋 Relatório Completo"):
+            st.code(format_strategy_report(result), language="")
+
+    else:
+        st.markdown("""
+        ### Como funciona a Otimização de Markowitz
+
+        | Conceito | Explicação |
+        |---|---|
+        | **Monte Carlo de Pesos** | Gera N combinações aleatórias de pesos e avalia cada uma |
+        | **Max Sharpe** | Portfólio com melhor retorno ajustado ao risco |
+        | **Min Volatility** | Portfólio mais estável, menor oscilação possível |
+        | **Equal Weight** | Baseline ingênuo: todos os ativos com o mesmo peso |
+        | **Fronteira Eficiente** | A "borda" superior do scatter: máximo retorno para cada nível de risco |
+
+        Configure seus tickers, limites de peso e clique em **Otimizar Carteira**.
+        """)
+
 
