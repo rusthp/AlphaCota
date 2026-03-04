@@ -86,8 +86,45 @@
 
 ## 🔍 Melhorias Identificadas na Auditoria
 
-- [ ] M1 — Score engine persistência: salvar alpha_score no SQLite (substituir scores do quant antigo)
+- [x] M1 — Score engine persistência: salvar alpha_score no SQLite (substituir scores do quant antigo)
 - [ ] M2 — Data loader: fallback gracioso para FIIs sem histórico no yfinance
 - [ ] M3 — CLI: command `score --ticker MXRF11` para score rápido via terminal
 - [ ] M4 — Testes de integração: `allocation_pipeline` com novo score_engine
 - [ ] M5 — Dashboard: indicador visual de quais FIIs do universo passaram no screening
+
+---
+
+## 🔥 PRÓXIMAS MELHORIAS (Fase 2.4 — Prioridade Alta)
+
+### 2.4 Performance e UX do Dashboard
+- [ ] 2.4.1 Adicionar `@st.cache_data` em todas as chamadas ao yfinance/data_bridge
+- [ ] 2.4.2 Botão "↺ Atualizar Dados" no sidebar com `force_refresh=True`
+- [ ] 2.4.3 Indicador de progresso ao buscar dados de múltiplos tickers
+- [ ] 2.4.4 Dark mode consistente: matplotlib com fundo escuro (`plt.style.use('dark_background')`)
+- [ ] 2.4.5 Métricas de data quality visível no sidebar (X/Y tickers com dados reais)
+
+### 2.5 Quantstats — Tearsheet Profissional
+- [ ] 2.5.1 Instalar `quantstats` (`pip install quantstats`)
+- [ ] 2.5.2 Integrar no backtest engine: gerar HTML tearsheet completo
+- [ ] 2.5.3 Aba nova no dashboard: "📊 Tearsheet" com metrics profissionais
+- [ ] 2.5.4 Exportar relatório PDF/HTML com botão de download no dashboard
+
+### 2.6 Importar Carteira via CSV
+- [ ] 2.6.1 Definir formato CSV: `ticker,quantidade,preco_medio`
+- [ ] 2.6.2 Widget `st.file_uploader` no sidebar para upload do CSV
+- [ ] 2.6.3 Parsear CSV e popular todas as abas com dados da carteira real do usuário
+- [ ] 2.6.4 Salvar última carteira no `st.session_state` para persistência
+- [ ] 2.6.5 Exportar carteira recomendada como CSV para download
+
+### 2.7 Dados Reais — python-bcb + Macro
+- [ ] 2.7.1 Integrar `python-bcb` para buscar Selic, CDI e IPCA histórico
+- [ ] 2.7.2 Usar Selic real como `risk_free_rate` no Markowitz e Sharpe
+- [ ] 2.7.3 Adicionar gráfico de Selic vs DY da carteira na aba Backtest
+- [ ] 2.7.4 Calcular "Prêmio de risco" real (DY - CDI) por FII
+
+### 2.8 ML — Clustering e Momentum
+- [ ] 2.8.1 Criar `core/momentum_engine.py` com ranking por retorno 3/6/12m
+- [ ] 2.8.2 Criar `core/cluster_engine.py` com K-Means nos retornos históricos
+- [ ] 2.8.3 Aba nova: "🔬 Análise Avançada" com momentum ranking e clusters
+- [ ] 2.8.4 Integrar clustering no Markowitz: evitar ativos no mesmo cluster
+

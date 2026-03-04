@@ -34,11 +34,71 @@ from data.data_bridge import (
     SECTOR_MAP as BRIDGE_SECTOR_MAP,
     HAS_YFINANCE as BRIDGE_HAS_YFINANCE,
 )
+from core.report_engine import (
+    generate_html_tearsheet,
+    generate_portfolio_csv_download,
+    generate_html_download,
+)
 
 import datetime as _dt
+import io
+import csv
 _today      = _dt.date.today()
 _START_DATE = (_today.replace(year=_today.year - 3)).isoformat()
 _END_DATE   = _today.isoformat()
+
+# Dark mode consistente para todos os gráficos matplotlib
+plt.style.use("dark_background")
+plt.rcParams.update({
+    "axes.facecolor":   "#0e1117",
+    "figure.facecolor": "#0e1117",
+    "axes.edgecolor":   "#444",
+    "grid.color":       "#333",
+    "text.color":       "#fafafa",
+    "axes.labelcolor":  "#fafafa",
+    "xtick.color":      "#aaa",
+    "ytick.color":      "#aaa",
+    "axes.titlecolor":  "#fafafa",
+})
+
+
+# ---- Cache helpers ---------------------------------------------------------
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_returns(tickers_tuple: tuple, start: str, end: str, refresh: bool):
+    """Retornos mensais com cache de 1h. refresh=True invalida o cache."""
+    returns, sources = load_returns_bulk(list(tickers_tuple), start, end,
+                                         force_refresh=refresh)
+    return returns, sources
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_portfolio(tickers_tuple: tuple, qtds_tuple: tuple, refresh: bool):
+    """Carteira com preços reais, com cache de 1h."""
+    qtds = dict(zip(tickers_tuple, qtds_tuple))
+    return build_portfolio_from_tickers(list(tickers_tuple), qtds)
+
+
+# ---- Parser de CSV de carteira ---------------------------------------------
+def _parse_portfolio_csv(content: bytes) -> list[dict]:
+    """
+    Parseia CSV com colunas: ticker, quantidade, preco_medio
+    Retorna lista de dicts prontos para os engines.
+    """
+    rows = []
+    text = content.decode("utf-8", errors="ignore")
+    reader = csv.DictReader(io.StringIO(text))
+    for row in reader:
+        ticker = row.get("ticker", row.get("Ticker", "")).strip().upper()
+        if not ticker:
+            continue
+        try:
+            qty = int(float(row.get("quantidade", row.get("Quantidade", 0))))
+            pm  = float(row.get("preco_medio", row.get("Preco_Medio",
+                        row.get("preco_atual", 10.0))))
+        except (ValueError, TypeError):
+            qty, pm = 100, 10.0
+        rows.append({"ticker": ticker, "quantidade": qty, "preco_medio": pm})
+    return rows
 
 
 st.set_page_config(
@@ -55,14 +115,94 @@ st.sidebar.title("AlphaCota")
 st.sidebar.markdown("*Motor Quantitativo para FIIs*")
 st.sidebar.markdown("---")
 
+# --- Perfil e aporte
 perfil_selecionado = st.sidebar.selectbox(
     "Perfil de Investidor",
     ["conservador", "moderado", "agressivo"],
     index=1,
 )
 aporte_mensal = st.sidebar.number_input("Aporte Mensal (R$)", value=1000.0, step=100.0, min_value=0.0)
+
 st.sidebar.markdown("---")
-st.sidebar.caption("AlphaCota v2 · Fases 1-2.3 ✅")
+
+# --- Import de carteira via CSV
+st.sidebar.subheader("📂 Importar Carteira")
+st.sidebar.markdown(
+    "Formato esperado: `ticker, quantidade, preco_medio`"
+    "\n[Baixar modelo CSV](data:text/csv;charset=utf-8,ticker%2Cquantidade%2Cpreco_medio%0AMXRF11%2C200%2C10.0%0AHGLG11%2C15%2C155.0)",
+    unsafe_allow_html=False,
+)
+cart_file = st.sidebar.file_uploader(
+    "Upload CSV", type="csv", label_visibility="collapsed", key="csv_upload"
+)
+
+if cart_file is not None:
+    _parsed = _parse_portfolio_csv(cart_file.read())
+    if _parsed:
+        st.session_state["portfolio_csv"] = _parsed
+        st.sidebar.success(f"✅ {len(_parsed)} ativos carregados!")
+    else:
+        st.sidebar.error("CSV inválido. Verifique o formato.")
+
+_cart = st.session_state.get("portfolio_csv", [])
+if _cart:
+    _ck_tickers = [a["ticker"] for a in _cart]
+    st.sidebar.caption(f"💼 Carteira ativa: {', '.join(_ck_tickers)}")
+
+# --- Refresh manual de dados
+st.sidebar.markdown("---")
+_force_refresh = st.sidebar.button(
+    "↺ Atualizar Dados (yfinance)",
+    key="btn_refresh",
+    help="Força nova busca de preços e dividendos, ignorando o cache local.",
+)
+if _force_refresh:
+    st.cache_data.clear()
+    st.sidebar.success("Cache limpo! Próxima análise busca dados frescos.")
+
+# --- Data quality badge
+if BRIDGE_HAS_YFINANCE:
+    st.sidebar.success("🟢 yfinance ativo — dados reais disponíveis")
+else:
+    st.sidebar.warning("🟡 yfinance não instalado — usando dados sintéticos")
+
+# --- Exportar relatório
+st.sidebar.markdown("---")
+st.sidebar.subheader("📤 Exportar")
+
+_export_portfolio = st.session_state.get("portfolio_csv", [])
+if not _export_portfolio:
+    _export_portfolio = [
+        {"ticker": "MXRF11", "quantidade": 200, "preco_atual": 10.05, "dividend_mensal": 0.09},
+        {"ticker": "HGLG11", "quantidade": 15,  "preco_atual": 155.0, "dividend_mensal": 1.10},
+        {"ticker": "XPML11", "quantidade": 100, "preco_atual": 90.0,  "dividend_mensal": 0.65},
+    ]
+
+_csv_bytes = generate_portfolio_csv_download(_export_portfolio)
+st.sidebar.download_button(
+    label="⬇️ Carteira CSV",
+    data=_csv_bytes,
+    file_name="alphacota_carteira.csv",
+    mime="text/csv",
+    key="dl_csv",
+)
+
+_tearsheet_html = generate_html_tearsheet(
+    portfolio=_export_portfolio,
+    title="AlphaCota — Portfolio Tearsheet",
+)
+_html_bytes = generate_html_download(_tearsheet_html)
+st.sidebar.download_button(
+    label="⬇️ Tearsheet HTML",
+    data=_html_bytes,
+    file_name="alphacota_tearsheet.html",
+    mime="text/html",
+    key="dl_html",
+)
+
+st.sidebar.markdown("---")
+st.sidebar.caption("AlphaCota v2 · Fases 1-2.5 ✅")
+
 
 # ---------------------------------------------------------------------------
 # Abas principais
@@ -426,14 +566,22 @@ with tab_risco:
         )
 
     tickers_raw = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
+    # Prefer carteira importada via CSV se disponível
+    if st.session_state.get("portfolio_csv"):
+        _tk_csv = [a["ticker"] for a in st.session_state["portfolio_csv"]]
+        tickers_raw = _tk_csv or tickers_raw
 
     if st.button("🔍 Analisar Correlações", type="primary", key="btn_corr"):
         with st.spinner("Buscando dados e calculando correlações..."):
-            return_series_corr, sources_corr = load_returns_bulk(
-                tickers_raw, _START_DATE, _END_DATE
+            return_series_corr, sources_corr = _cached_returns(
+                tuple(tickers_raw), _START_DATE, _END_DATE, _force_refresh
             )
 
-            portfolio_corr = build_portfolio_from_tickers(tickers_raw)
+            portfolio_corr = _cached_portfolio(
+                tuple(tickers_raw),
+                tuple([100] * len(tickers_raw)),
+                _force_refresh,
+            )
 
             analysis = analyse_portfolio_risk(
                 portfolio=portfolio_corr,
@@ -580,6 +728,9 @@ with tab_markowitz:
         mk_rf = st.number_input("Taxa Livre de Risco (%/ano)", value=10.75, step=0.25) / 100.0
 
     mk_tickers = [t.strip().upper() for t in mk_tickers_input.split(",") if t.strip()]
+    if st.session_state.get("portfolio_csv"):
+        _mk_csv = [a["ticker"] for a in st.session_state["portfolio_csv"]]
+        mk_tickers = _mk_csv or mk_tickers
 
     mk_col_w1, mk_col_w2 = st.columns(2)
     with mk_col_w1:
@@ -589,8 +740,8 @@ with tab_markowitz:
 
     if st.button("⚙️ Otimizar Carteira", type="primary", key="btn_markowitz"):
         with st.spinner(f"Buscando dados e simulando {mk_n_sim:,} portfólios..."):
-            mk_return_series, mk_sources = load_returns_bulk(
-                mk_tickers, _START_DATE, _END_DATE
+            mk_return_series, mk_sources = _cached_returns(
+                tuple(mk_tickers), _START_DATE, _END_DATE, _force_refresh
             )
             mk_corr_matrix = build_correlation_matrix(mk_tickers, mk_return_series)
 
@@ -734,7 +885,7 @@ with tab_stress:
 
     st.markdown("---")
 
-    # Tickers e carteira via data_bridge
+    # Tickers e carteira via data_bridge / CSV importado
     stress_tickers_default = "MXRF11, HGLG11, XPML11, KNCR11"
     stress_tk_input = st.text_input(
         "Tickers da carteira para stress",
@@ -743,7 +894,15 @@ with tab_stress:
     )
     stress_ticker_list = [t.strip().upper() for t in stress_tk_input.split(",") if t.strip()]
 
-    STRESS_QUANTITIES = {"MXRF11": 200, "HGLG11": 15, "XPML11": 100, "KNCR11": 50}
+    # Preferir carteira CSV se disponível
+    if st.session_state.get("portfolio_csv"):
+        _st_csv = st.session_state["portfolio_csv"]
+        stress_ticker_list = [a["ticker"] for a in _st_csv] or stress_ticker_list
+        _st_qtds = {a["ticker"]: a["quantidade"] for a in _st_csv}
+    else:
+        _st_qtds = {"MXRF11": 200, "HGLG11": 15, "XPML11": 100, "KNCR11": 50}
+
+    STRESS_QUANTITIES = _st_qtds
 
     st.subheader("Configurar Análise")
     sc1, sc2 = st.columns([2, 1])
