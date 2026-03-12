@@ -10,3 +10,53 @@ cota_ai/scripts/
 
 # Streamlit
 .streamlit/
+
+# Rulebook - ignore runtime data, keep specs and tasks
+/.rulebook/*
+!/.rulebook/specs/
+!/.rulebook/tasks/
+!/.rulebook/tasks/**/*.md
+!/.rulebook/rulebook.json
+
+# Patterns added by @hivellm/rulebook
+# Added at: 2026-03-12T20:06:38.220Z
+
+*.egg
+*.egg-info/
+*.log
+*.so
+*.swo
+*.swp
+*~
+.DS_Store
+.Python
+.cache/
+.eggs/
+.env
+.env.*.local
+.env.local
+.idea/
+.installed.cfg
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+.vscode/
+ENV/
+Thumbs.db
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+env/
+lib/
+lib64/
+logs/
+parts/
+sdist/
+temp/
+tmp/
+var/
+venv/
+wheels/

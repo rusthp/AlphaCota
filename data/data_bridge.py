@@ -37,51 +37,21 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
-# Mapeamento setorial completo de FIIs BR
+# Mapeamento setorial — importado do módulo universe (fonte única)
 # ---------------------------------------------------------------------------
 
-SECTOR_MAP: dict[str, str] = {
-    # Papel (CRI/CRA)
-    "MXRF11": "Papel (CRI)",
-    "KNCR11": "Papel (CRI)",
-    "RECR11": "Papel (CRI)",
-    "MCCI11": "Papel (CRI)",
-    "VRTA11": "Papel (CRI)",
-    "RZAK11": "Papel (CRI)",
-    "BRCO11": "Papel (CRI)",
-    "HABT11": "Papel (CRI)",
-    # Logística
-    "HGLG11": "Logística",
-    "XPLG11": "Logística",
-    "BTLG11": "Logística",
-    "VILG11": "Logística",
-    "BRCO11": "Logística",
-    "SDIL11": "Logística",
-    # Shopping
-    "XPML11": "Shopping",
-    "MALL11": "Shopping",
-    "VISC11": "Shopping",
-    "HSML11": "Shopping",
-    "SHPH11": "Shopping",
-    "ATSA11": "Shopping",
-    # Lajes Corporativas
-    "BRCR11": "Lajes Corp.",
-    "JSRE11": "Lajes Corp.",
-    "PVBI11": "Lajes Corp.",
-    "HGRE11": "Lajes Corp.",
-    "TRCX11": "Lajes Corp.",
-    # Fundo de Fundos
-    "BCFF11": "Fundo de Fundos",
-    "HFOF11": "Fundo de Fundos",
-    "RBFF11": "Fundo de Fundos",
-    "MGFF11": "Fundo de Fundos",
-    # Hospitais / Educacional
-    "HCTR11": "Saúde",
-    "CARE11": "Saúde",
-    # Residencial
-    "RZTR11": "Agro",
-    "RURA11": "Agro",
-}
+try:
+    from data.universe import get_sector_map as _get_sector_map
+    SECTOR_MAP: dict[str, str] = _get_sector_map()
+except ImportError:
+    # Fallback mínimo caso universe.py não esteja disponível
+    SECTOR_MAP: dict[str, str] = {
+        "MXRF11": "Papel (CRI)", "KNCR11": "Papel (CRI)", "RECR11": "Papel (CRI)",
+        "HGLG11": "Logística", "XPLG11": "Logística", "BTLG11": "Logística",
+        "XPML11": "Shopping", "MALL11": "Shopping", "VISC11": "Shopping",
+        "BRCR11": "Lajes Corp.", "JSRE11": "Lajes Corp.",
+        "BCFF11": "Fundo de Fundos", "HFOF11": "Fundo de Fundos",
+    }
 
 # Parâmetros de retorno sintético por setor (mu_mensal, sigma_mensal)
 _SECTOR_PARAMS: dict[str, tuple[float, float]] = {
@@ -90,8 +60,12 @@ _SECTOR_PARAMS: dict[str, tuple[float, float]] = {
     "Shopping":        (0.0075, 0.035),
     "Lajes Corp.":     (0.0065, 0.033),
     "Fundo de Fundos": (0.0080, 0.028),
+    "Híbrido":         (0.0080, 0.028),
     "Saúde":           (0.0070, 0.032),
     "Agro":            (0.0080, 0.028),
+    "Residencial":     (0.0075, 0.028),
+    "Educacional":     (0.0070, 0.030),
+    "Hotel":           (0.0065, 0.035),
     "Outros":          (0.0075, 0.028),
 }
 
@@ -165,8 +139,10 @@ def load_returns(
                 # Remove o primeiro 0.0 (sem retorno anterior)
                 returns = [r for r in returns if r != 0.0] or returns
                 return returns, "real"
-        except Exception:
-            pass  # Fallback silencioso
+            else:
+                logger.warning(f"Poucos dados para {ticker} ({len(prices)}), usando fallback sintético.")
+        except Exception as e:
+            logger.warning(f"Erro ao buscar retornos para {ticker}: {e}. Fallback ativado.")
 
     # Fallback: retornos sintéticos
     import datetime
@@ -226,9 +202,12 @@ def load_last_price(ticker: str) -> tuple[float, str]:
             start = (datetime.date.today() - datetime.timedelta(days=60)).isoformat()
             prices = fetch_prices(ticker, start, end, frequency="1d")
             if prices:
-                return float(prices[-1]["close"]), "real"
-        except Exception:
-            pass
+                p = float(prices[-1]["close"])
+                if p > 0:
+                    return round(p, 2), "real"
+            logger.warning(f"Preço zero ou ausente para {ticker}, usando fallback.")
+        except Exception as e:
+            logger.warning(f"Erro ao buscar último preço de {ticker}: {e}. Fallback ativado.")
 
     return _FALLBACK_PRICES.get(ticker, 10.0), "fallback"
 
@@ -251,9 +230,12 @@ def load_monthly_dividend(ticker: str) -> tuple[float, str]:
             divs = fetch_dividends(ticker, start, end)
             if len(divs) >= 6:
                 values = [float(d["dividend"]) for d in divs]
-                return round(sum(values) / len(values), 4), "real"
-        except Exception:
-            pass
+                avg = sum(values) / len(values)
+                if avg > 0:
+                    return float(round(avg, 4)), "real"
+            logger.warning(f"Aviso: Sem média de dividendos válida para {ticker}, usando fallback.")
+        except Exception as e:
+            logger.warning(f"Erro ao buscar dividendos de {ticker}: {e}. Fallback ativado.")
 
     return _FALLBACK_DIVIDENDS.get(ticker, 0.07), "fallback"
 

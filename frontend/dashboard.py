@@ -30,6 +30,7 @@ from core.stress_engine import (
 from data.data_bridge import (
     load_returns_bulk,
     build_portfolio_from_tickers,
+    load_last_price,
     get_data_quality_report,
     SECTOR_MAP as BRIDGE_SECTOR_MAP,
     HAS_YFINANCE as BRIDGE_HAS_YFINANCE,
@@ -46,6 +47,12 @@ from core.macro_engine import (
 )
 from core.momentum_engine import rank_by_momentum, top_momentum
 from core.cluster_engine import cluster_portfolio, suggest_diversification
+from data.universe import get_universe, get_tickers, get_sectors_summary, get_universe_size
+from data.fundamentals_scraper import (
+    fetch_fundamentals_bulk,
+    get_cache_status,
+    HAS_SCRAPER_DEPS,
+)
 
 import datetime as _dt
 import io
@@ -214,7 +221,8 @@ st.sidebar.caption("AlphaCota v2 · Fases 1-2.8 ✅")
 # ---------------------------------------------------------------------------
 # Abas principais
 # ---------------------------------------------------------------------------
-tab_projecao, tab_backtest, tab_risco, tab_markowitz, tab_stress, tab_avancado = st.tabs([
+tab_pipeline, tab_projecao, tab_backtest, tab_risco, tab_markowitz, tab_stress, tab_avancado = st.tabs([
+    "🤖 Análise Completa",
     "📈 Projeção Futura (Monte Carlo)",
     "🔬 Evidência Histórica (Backtest)",
     "🛡️ Risco & Correlação",
@@ -222,6 +230,243 @@ tab_projecao, tab_backtest, tab_risco, tab_markowitz, tab_stress, tab_avancado =
     "⚡ Stress Testing",
     "🧬 Análise Avançada",
 ])
+
+
+# ===========================================================================
+# ABA 0 — ANÁLISE COMPLETA (PIPELINE INTEGRADO)
+# ===========================================================================
+with tab_pipeline:
+    st.header("🤖 Análise Completa — Pipeline Quantamental")
+    st.markdown(
+        "Roda o pipeline de ponta a ponta: **Universo → Scraping → Score Engine → "
+        "Screening → Alocação → Monte Carlo → FIRE → Explain**. "
+        "Tudo integrado em uma única análise."
+    )
+
+    # ── Configuração ──
+    st.markdown("---")
+    pp_col1, pp_col2, pp_col3 = st.columns(3)
+    with pp_col1:
+        pp_universe_mode = st.selectbox(
+            "Universo de FIIs",
+            ["IFIX (recomendado)", "Carteira CSV", "Custom"],
+            index=0,
+            key="pp_universe",
+        )
+    with pp_col2:
+        pp_sectors = st.multiselect(
+            "Filtrar Setores (opcional)",
+            ["Papel (CRI)", "Logística", "Shopping", "Lajes Corp.", "Fundo de Fundos", "Híbrido", "Agro"],
+            default=[],
+            key="pp_sectors",
+        )
+    with pp_col3:
+        pp_score_threshold = st.slider(
+            "Score Mínimo (Alpha Score)",
+            1.0, 9.0, 5.0, step=0.5,
+            key="pp_threshold",
+        )
+
+    # Determinar tickers do universo
+    if pp_universe_mode == "Carteira CSV" and st.session_state.get("portfolio_csv"):
+        pp_tickers = [a["ticker"] for a in st.session_state["portfolio_csv"]]
+    elif pp_universe_mode == "Custom":
+        pp_custom = st.text_input(
+            "Tickers (vírgula)",
+            value="MXRF11, HGLG11, KNCR11, XPML11, BTLG11, BCFF11",
+            key="pp_custom_tickers",
+        )
+        pp_tickers = [t.strip().upper() for t in pp_custom.split(",") if t.strip()]
+    else:
+        pp_tickers = get_tickers(
+            ifix_only=True,
+            sectors=pp_sectors if pp_sectors else None,
+        )
+
+    st.caption(f"📊 Universo: **{len(pp_tickers)} FIIs** · Perfil: **{perfil_selecionado}** · Threshold: **{pp_score_threshold}**")
+
+    # ── Indicadores de status ──
+    i1, i2, i3 = st.columns(3)
+    with i1:
+        if HAS_SCRAPER_DEPS:
+            st.success("🟢 Scraper disponível (requests + bs4)")
+        else:
+            st.warning("🟡 Scraper indisponível — usando dados padrão")
+    with i2:
+        if BRIDGE_HAS_YFINANCE:
+            st.success("🟢 yfinance ativo — preços reais")
+        else:
+            st.warning("🟡 yfinance não instalado — preços fallback")
+    with i3:
+        sectors_summary = get_sectors_summary()
+        n_sectors = len(sectors_summary)
+        st.info(f"📁 {n_sectors} setores no universo")
+
+    if st.button("🚀 Rodar Pipeline Completo", type="primary", key="btn_pipeline"):
+        # STEP 1 — Buscar dados fundamentalistas
+        with st.spinner(f"🔍 Buscando dados fundamentalistas de {len(pp_tickers)} FIIs..."):
+            fundamentals = fetch_fundamentals_bulk(pp_tickers)
+
+        # Montar assets_data no formato do pipeline
+        assets_data = []
+        for ticker in pp_tickers:
+            f = fundamentals.get(ticker, {})
+            price, _ = load_last_price(ticker) if BRIDGE_HAS_YFINANCE else (10.0, "fallback")
+            assets_data.append({
+                "ticker": ticker,
+                "classe": "FII",  # Classe para o profile_allocator (ETF/ACAO/FII)
+                "setor": BRIDGE_SECTOR_MAP.get(ticker, "Outros"),  # Setor para display
+                "preco_atual": price,
+                "dividend_yield": f.get("dividend_yield", 0.08),
+                "dividend_consistency": f.get("dividend_consistency", 7.0),
+                "pvp": f.get("pvp", 1.0),
+                "debt_ratio": f.get("debt_ratio", 0.3),
+                "vacancy_rate": f.get("vacancy_rate", 0.05),
+                "revenue_growth_12m": f.get("revenue_growth_12m", 0.0),
+                "earnings_growth_12m": f.get("earnings_growth_12m", 0.0),
+                # Altman Z — campos para quant_engine
+                "working_capital": 1000, "total_assets": 5000,
+                "retained_earnings": 800, "ebit": 400,
+                "market_value_equity": 3000, "total_liabilities": 1500,
+                "revenue": 1200,
+                "_data_source": f.get("_source", "default"),
+            })
+
+        # Fontes de dados
+        sources_count = {}
+        for a in assets_data:
+            src = a.get("_data_source", "default")
+            sources_count[src] = sources_count.get(src, 0) + 1
+
+        src_badge = " · ".join(f"{v}x {k}" for k, v in sources_count.items())
+        st.info(f"📡 Fontes de dados: {src_badge}")
+
+        # STEP 2 — Rodar pipeline
+        with st.spinner("⚙️ Rodando pipeline quantamental..."):
+            import sqlite3
+            conn = sqlite3.connect("alphacota.db")
+            from core.state_repository import init_db as init_state_db
+            init_state_db(conn)
+
+            from services.allocation_pipeline import run_allocation_pipeline
+            pipeline_result = run_allocation_pipeline(
+                connection=conn,
+                user_profile=perfil_selecionado,
+                assets_data=assets_data,
+                current_portfolio=None,
+                aporte_mensal=aporte_mensal,
+                meses_simulacao=60,
+                score_threshold=pp_score_threshold,
+            )
+            conn.close()
+
+        if "error" in pipeline_result:
+            st.error(f"❌ {pipeline_result['error']}")
+            st.info(
+                "Tente reduzir o **Score Mínimo** na configuração acima, "
+                "ou ampliar os setores do universo."
+            )
+        else:
+            st.success("✅ Pipeline concluído com sucesso!")
+
+            # ── Métricas principais ──
+            alloc = pipeline_result["allocations"]
+            risk = pipeline_result["risk_projection"]
+            fire = pipeline_result["fire_projection"]
+
+            pc1, pc2, pc3, pc4 = st.columns(4)
+            pc1.metric("📊 Ativos Selecionados", f"{len(alloc)} de {len(pp_tickers)}")
+            pc2.metric("📈 Retorno Esperado", f"{risk['expected_return']*100:.1f}% a.a.")
+            pc3.metric("🎯 Mediana Monte Carlo", f"R$ {risk['median_projection']:,.0f}")
+            pc4.metric("🔥 FIRE", f"{fire['years_to_fire']} anos" if not isinstance(fire['years_to_fire'], str) else fire['years_to_fire'])
+
+            st.markdown("---")
+
+            # ── Alocação recomendada ──
+            st.subheader("📋 Alocação Recomendada")
+            alloc_data = []
+            for ticker, weight in sorted(alloc.items(), key=lambda x: x[1], reverse=True):
+                setor = BRIDGE_SECTOR_MAP.get(ticker, "—")
+                alloc_data.append({
+                    "Ticker": ticker,
+                    "Setor": setor,
+                    "Peso (%)": f"{weight*100:.2f}%",
+                    "Peso": weight,
+                })
+
+            df_alloc = pd.DataFrame(alloc_data)
+
+            # Pizza de alocação
+            al1, al2 = st.columns([2, 1])
+            with al1:
+                st.dataframe(df_alloc[["Ticker", "Setor", "Peso (%)"]], use_container_width=True, hide_index=True)
+            with al2:
+                fig_alloc, ax_alloc = plt.subplots(figsize=(5, 4))
+                top_n = df_alloc.head(8)
+                colors_alloc = ["#4CAF50", "#2196F3", "#FF9800", "#9C27B0", "#F44336",
+                                "#607D8B", "#00BCD4", "#FFC107"]
+                ax_alloc.pie(
+                    top_n["Peso"],
+                    labels=top_n["Ticker"],
+                    autopct="%1.1f%%",
+                    colors=colors_alloc[:len(top_n)],
+                    startangle=90,
+                )
+                ax_alloc.set_title(f"Alocação — {perfil_selecionado.title()}")
+                st.pyplot(fig_alloc)
+
+            st.markdown("---")
+
+            # ── Risk Metrics ──
+            st.subheader("📉 Projeção de Risco")
+            rk1, rk2, rk3 = st.columns(3)
+            rk1.metric("Prob. de Lucro", f"{risk['probability_of_profit']*100:.1f}%")
+            rk2.metric("Drawdown Médio", f"{risk['avg_drawdown']*100:.1f}%")
+            rk3.metric("Rebalanceado?", "✅ Sim" if pipeline_result["rebalance_executed"] else "⏳ Não")
+
+            st.markdown("---")
+
+            # ── Explain Engine ──
+            st.subheader("🔎 Auditoria — Por que cada ativo?")
+            explain = pipeline_result.get("explanation", {})
+            logic = explain.get("selection_logic", [])
+
+            for item in logic:
+                with st.expander(f"**{item['ticker']}** — {item['classe']} · {item['weight_pct']:.1f}%"):
+                    for reason in item.get("reason", []):
+                        st.markdown(f"- {reason}")
+
+            # ── Download da alocação ──
+            st.markdown("---")
+            alloc_csv = "ticker,peso_pct,setor\n" + "\n".join(
+                f"{a['Ticker']},{a['Peso']*100:.2f},{a['Setor']}" for a in alloc_data
+            )
+            st.download_button(
+                "⬇️ Download Alocação CSV",
+                data=alloc_csv.encode("utf-8"),
+                file_name="alphacota_alocacao.csv",
+                mime="text/csv",
+                key="dl_pipeline_csv",
+            )
+
+    else:
+        st.markdown("""
+        ### Como funciona o Pipeline Completo
+
+        | Etapa | O que faz |
+        |---|---|
+        | **1. Universo** | Carrega os FIIs do IFIX ou sua carteira |
+        | **2. Fundamentalistas** | Busca DY, P/VP, vacância via scraper/cache |
+        | **3. Score Engine** | Calcula Alpha Score (Income + Valuation + Risk + Growth) |
+        | **4. Screening** | Filtra: Score ≥ threshold + Altman Z fora de risco |
+        | **5. Otimização** | Distribui pesos por classe conforme perfil |
+        | **6. Monte Carlo** | Simula 500 cenários futuros |
+        | **7. FIRE** | Calcula tempo até independência financeira |
+        | **8. Persistência** | Salva snapshot no SQLite |
+        | **9. Explain** | Gera racional auditável por ativo |
+
+        Configure o universo acima e clique em **Rodar Pipeline Completo**.
+        """)
 
 
 # ===========================================================================

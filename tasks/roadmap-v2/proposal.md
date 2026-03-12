@@ -1,107 +1,105 @@
-# Proposal: AlphaCota v2 — Roadmap Estratégico
+# Proposal: AlphaCota v2 — Roadmap Estratégico Atualizado
 
 ## Por quê
 
-O AlphaCota hoje possui um motor promissor: score engine, simulação de bola de neve, perfis de alocação e integração com IA via Groq. Porém, **falta evidência estatística**. Sem um backtest sólido, todas as recomendações do sistema são hipóteses não validadas.
+O AlphaCota já possui um motor quantitativo sólido: score engine com fórmula matemática explícita, backtest engine, correlação, Markowitz, stress testing, momentum, clustering e macro engine. São **99 testes unitários passando** e 6 abas no dashboard.
 
-O maior risco atual não é tecnológico — é a ausência de prova de performance. Finanças exige evidência quantitativa. Um dashboard bonito sem backtest é apenas interface.
+Porém, o motor roda com **dados hipotéticos**. Os engines funcionam perfeitamente como matemática, mas ninguém alimenta dados fundamentalistas reais (P/VP, vacância, dívida/PL). O dashboard usa tickers hardcoded e séries sintéticas no backtest. Isso significa que as análises são demonstrações, não recomendações reais.
+
+**O próximo passo não é mais código quant — é dados reais.**
 
 ## O que Muda
 
-Este roadmap transforma o AlphaCota de um sistema de recomendações heurísticas em um **motor quantitativo validado**, capaz de evoluir para SaaS.
+O roadmap agora tem 6 fases priorizadas pelo impacto:
+
+1. ~~Quant Foundation~~ ✅ FEITO
+2. ~~Risk & Optimization~~ ✅ FEITO
+3. **Dados Reais & Pipeline Integrado** ← PRÓXIMO
+4. Robustez & Qualidade
+5. Diferenciação & Inteligência
+6. SaaS & Sistema de Usuários ← POR ÚLTIMO
 
 ---
 
-## Fase 1 — Quant Foundation (0–3 meses)
+## Fase 3 — Dados Reais & Pipeline Integrado (PRIORIDADE MÁXIMA)
 
-**Objetivo**: transformar o projeto em motor quantitativo validado.
+### Problema
+- `score_engine` recebe `dividend_yield`, `pvp`, `debt_ratio`, `vacancy_rate` mas nenhum módulo busca esses dados automaticamente
+- `data_bridge.py` só busca preços/retornos via yfinance, não dados fundamentalistas
+- Dashboard usa tickers hardcoded e `random.gauss()` no backtest
+- `run_allocation_pipeline()` existe e funciona mas o dashboard não o chama
 
-### 1.1 Backtest Engine
-- Novo módulo: `core/backtest_engine.py`
-- Simular aportes mensais e rebalanceamentos periódicos
-- Comparar performance contra o IFIX
-- Métricas obrigatórias: CAGR, Sharpe, Sortino, Max Drawdown, Volatilidade Anual
-- **Dependência**: dados históricos de cotação e dividendos
+### Solução
 
-### 1.2 Camada de Dados Históricos
-- Estrutura: `data/historical_prices/`, `data/historical_dividends/`, `data/macro/`
-- Coletar: histórico de cotação, dividendos, P/VP histórico, vacância quando possível
-- Preparar migração futura: SQLite → PostgreSQL
+**3.1 — Coletor de Dados Fundamentalistas** (`data/fundamentals_scraper.py`)
+- Scraper para Status Invest ou FundsExplorer
+- Coleta: DY real, P/VP, vacância, dívida/PL, liquidez diária
+- Cache em SQLite com TTL de 24h
+- Fallback: último dado em cache se scraping falhar
 
-### 1.3 Formalização do Score Engine
-- Transformar lógica heurística em modelo matemático explícito:
-  ```
-  score = (w_valuation × valuation_score) + (w_income × dividend_stability) + (w_risk × risk_factor)
-  ```
-- Isso permite backtest do próprio score e otimização de pesos futura
+**3.2 — Universo Dinâmico** (`data/universe.py`)
+- Lista dos ~100 FIIs do IFIX com classificação setorial automática
+- Substituir tickers hardcoded do dashboard
+- Filtro de liquidez mínima (R$ 500k/dia)
 
----
+**3.3 — Backtest Real**
+- Eliminar dados sintéticos do dashboard
+- Auto-bootstrap de dados na primeira execução
+- Badge visual "dados reais" vs "sintético"
 
-## Fase 2 — Risk & Optimization (3–6 meses)
-
-**Objetivo**: sair de ranking de FIIs e evoluir para sistema de alocação otimizada.
-
-### 2.1 Correlação entre FIIs
-- Novo módulo: `core/correlation_engine.py`
-- Gerar matriz de correlação, mapa de concentração por setor e risco sistêmico
-- Melhora direta do `class_rebalancer.py`
-
-### 2.2 Otimização de Carteira (Markowitz)
-- Integrar `PyPortfolioOpt` (https://github.com/robertmartin8/PyPortfolioOpt)
-- Implementar: Mean-Variance Optimization, Monte Carlo de portfólio, fronteira eficiente
-- Métricas alvo: Max Sharpe e Min Volatility
-
-### 2.3 Stress Testing
-- Simular cenários adversos: alta de juros, queda de mercado, corte de dividendos
+**3.4 — Pipeline no Dashboard**
+- Nova aba "🤖 Análise Completa" usando `run_allocation_pipeline()`
+- Alimentar com dados do scraper + data_bridge
+- Histórico de snapshots com evolução temporal
 
 ---
 
-## Fase 3 — Arquitetura SaaS (6–12 meses)
+## Fase 4 — Robustez & Qualidade
 
-**Objetivo**: separar o motor matemático do produto comercial.
-
-### 3.1 Quant Engine como Microserviço
-- Isolar em `alphacota-quant/` usando FastAPI
-- Responsável exclusivamente por: cálculo, score, backtest, simulação
-
-### 3.2 API Principal em TypeScript
-- Stack: NestJS + PostgreSQL + JWT Auth
-- Responsável por: usuários, carteiras, billing, logs, histórico de recomendações
-
-### 3.3 Frontend Moderno
-- Next.js com charts interativos e dashboard responsivo
+- Fallback gracioso para FIIs sem histórico
+- Validação de inputs em todos os engines
+- Logging estruturado
+- CLI completo (`score`, `universe`, `pipeline`, `report`)
+- Cobertura de testes 95%+ no `core/`
 
 ---
 
-## Fase 4 — Diferenciação Real (12+ meses)
+## Fase 5 — Diferenciação & Inteligência
 
-**Objetivo**: tornar o AlphaCota único no mercado brasileiro.
+- Walk-forward optimization de pesos do score engine
+- Multi-ativos (Ações, ETFs)
+- Simulador FIRE com Monte Carlo e inflação real
+- Relatórios profissionais com quantstats + PDF
 
-- Aprendizado adaptativo + ajuste automático de pesos
-- Multi-ativos (além de FIIs)
-- API pública
-- Simulador FIRE comparativo por estratégia
+---
+
+## Fase 6 — Arquitetura SaaS & Usuários (POR ÚLTIMO)
+
+- FastAPI microserviço para o quant engine
+- NestJS + PostgreSQL + JWT Auth
+- Next.js com charts interativos
+- Sistema de billing (Stripe)
+- API pública documentada
 
 ---
 
 ## Referências Técnicas
 
-| Categoria           | Repositório                                                 | Uso Principal                             |
-|---------------------|-------------------------------------------------------------|-------------------------------------------|
-| Backtest            | [Backtrader](https://github.com/mementum/backtrader)        | Estudar arquitetura de engine             |
-| Backtest            | [Zipline](https://github.com/quantopian/zipline)            | Pipeline de dados e engine de simulação   |
-| Otimização          | [PyPortfolioOpt](https://github.com/robertmartin8/PyPortfolioOpt) | Integração direta na Fase 2         |
-| Engine Quant        | [QuantConnect Lean](https://github.com/QuantConnect/Lean)   | Referência de arquitetura profissional    |
-| RL Financeiro       | [FinRL](https://github.com/AI4Finance-Foundation/FinRL)     | Exploração futura de ML                   |
-| SaaS TS             | [bulletproof-nodejs](https://github.com/santiq/bulletproof-nodejs) | Arquitetura limpa para Fase 3      |
+| Categoria | Repositório | Uso |
+|-----------|-------------|-----|
+| Scraping | [Status Invest](https://statusinvest.com.br) | Dados fundamentalistas de FIIs |
+| Scraping | [FundsExplorer](https://www.fundsexplorer.com.br) | Alternativa p/ dados de FIIs |
+| Backtest | [Backtrader](https://github.com/mementum/backtrader) | Referência de arquitetura |
+| Otimização | [PyPortfolioOpt](https://github.com/robertmartin8/PyPortfolioOpt) | Referência (usamos implementation própria) |
+| SaaS | [bulletproof-nodejs](https://github.com/santiq/bulletproof-nodejs) | Arquitetura para Fase 6 |
 
 ---
 
-## Impacto Esperado
+## Impacto Esperado por Fase
 
-| Antes (Hoje)            | Depois (Fase 1)                          |
-|-------------------------|------------------------------------------|
-| Score heurístico        | Score matemático com pesos explícitos    |
-| Simulação sem validação | Backtest contra benchmark (IFIX)         |
-| Recomendações subjetivas| Decisões baseadas em CAGR e Sharpe       |
-| Motor isolado           | Base para SaaS escalável                 |
+| Fase | De | Para |
+|------|----|------|
+| 3 | Motor com dados fake | Análises com dados reais do mercado |
+| 4 | Código frágil | Motor robusto para uso diário |
+| 5 | Pesos fixos, só FIIs | Otimização adaptativa, multi-ativos |
+| 6 | Ferramenta local | Produto SaaS com usuários |

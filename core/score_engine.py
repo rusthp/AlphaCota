@@ -13,6 +13,9 @@ Os pesos padrão podem ser sobrescritos via parâmetro, permitindo
 backtest de diferentes configurações e otimização futura.
 """
 
+import math
+from core.logger import logger
+
 # ---------------------------------------------------------------------------
 # Pesos padrão — configuração do modelo base
 # Devem somar 1.0.
@@ -68,6 +71,13 @@ def calculate_income_score(
     Returns:
         float: Score de income de 0.0 a 10.0.
     """
+    if math.isnan(dividend_yield) or math.isinf(dividend_yield):
+        logger.warning(f"dividend_yield inválido ({dividend_yield}), assumindo 0.0")
+        dividend_yield = 0.0
+    if math.isnan(dividend_consistency) or math.isinf(dividend_consistency):
+        logger.warning(f"dividend_consistency inválido ({dividend_consistency}), assumindo 0.0")
+        dividend_consistency = 0.0
+
     # Normalizar DY: 4% → 0, 12% → 10
     dy_score = max(0.0, min(10.0, (dividend_yield - 0.04) / (0.12 - 0.04) * 10.0))
     # Combinar com consistência (peso 60/40)
@@ -88,6 +98,10 @@ def calculate_valuation_score(pvp: float) -> float:
     Returns:
         float: Score de valuation de 0.0 a 10.0.
     """
+    if math.isnan(pvp) or math.isinf(pvp) or pvp <= 0:
+        logger.warning(f"P/VP inválido ({pvp}), assumindo 1.0 (neutro)")
+        pvp = 1.0
+
     # Inverso: quanto menor o P/VP (até um mínimo saudável de 0.7), maior o score
     score = max(0.0, min(10.0, (1.5 - pvp) / (1.5 - 0.7) * 10.0))
     return round(score, 4)
@@ -109,6 +123,13 @@ def calculate_risk_score(
     Returns:
         float: Score de risco de 0.0 a 10.0 (10 = baixo risco).
     """
+    if math.isnan(debt_ratio) or math.isinf(debt_ratio):
+        logger.warning(f"debt_ratio inválido ({debt_ratio}), assumindo 0.5")
+        debt_ratio = 0.5
+    if math.isnan(vacancy_rate) or math.isinf(vacancy_rate):
+        logger.warning(f"vacancy_rate inválida ({vacancy_rate}), assumindo 0.15")
+        vacancy_rate = 0.15
+
     debt_score = max(0.0, min(10.0, (1.0 - debt_ratio) * 10.0))
     vacancy_score = max(0.0, min(10.0, (1.0 - vacancy_rate / 0.30) * 10.0))
     return round(0.50 * debt_score + 0.50 * vacancy_score, 4)
@@ -130,6 +151,11 @@ def calculate_growth_score(
     Returns:
         float: Score de crescimento de 0.0 a 10.0.
     """
+    if math.isnan(revenue_growth_12m) or math.isinf(revenue_growth_12m):
+        revenue_growth_12m = 0.0
+    if math.isnan(earnings_growth_12m) or math.isinf(earnings_growth_12m):
+        earnings_growth_12m = 0.0
+
     rev_score = max(0.0, min(10.0, revenue_growth_12m / 0.20 * 10.0))
     earn_score = max(0.0, min(10.0, earnings_growth_12m / 0.20 * 10.0))
     return round(0.50 * rev_score + 0.50 * earn_score, 4)
