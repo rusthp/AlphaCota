@@ -4,7 +4,7 @@ __pycache__/
 *$py.class
 
 # AlphaCota Specific
-cota_ai/meus_investimentos.db
+*.db
 cota_ai/.env
 cota_ai/scripts/
 
@@ -60,3 +60,20 @@ tmp/
 var/
 venv/
 wheels/
+
+# Coverage
+.coverage
+htmlcov/
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+bun.lockb
+frontend/bun.lockb
+
+# Cursor
+.cursor/

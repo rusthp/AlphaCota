@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "alphacota-financial-data": {
+      "command": "python",
+      "args": ["-m", "alphacota_mcp.financial_data.server"],
+      "cwd": "b:/alphacota",
+      "env": {
+        "PYTHONPATH": "b:/alphacota"
+      }
+    }
+  }
+}

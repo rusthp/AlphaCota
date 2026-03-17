@@ -1,20 +1,21 @@
 ## 1. Remove Orphaned Files
-- [ ] 1.1 Delete `cota_ai/get-pip.py` (2.1MB binary, no purpose)
-- [ ] 1.2 Delete runtime databases from repo (`alphacota.db`, `cota_ai/meus_investimentos.db`)
-- [ ] 1.3 Add `*.db` pattern to `.gitignore` if not already covered
+- [x] 1.1 Delete `cota_ai/get-pip.py` (2.1MB binary, no purpose)
+- [x] 1.2 Delete runtime databases from repo (`alphacota.db` untracked via git rm --cached)
+- [x] 1.3 Add `*.db` pattern to `.gitignore`
 
 ## 2. Evaluate Legacy Code
-- [ ] 2.1 Audit `cota_ai/ai_service.py` for reusable AI integration code
-- [ ] 2.2 Audit `cota_ai/news_scraper.py` for reusable news fetching code
-- [ ] 2.3 Migrate useful code to `core/` or `services/` if applicable
-- [ ] 2.4 Deprecate or archive `cota_ai/` directory
+- [x] 2.1 Audit `cota_ai/ai_service.py` — migrated to `core/ai_engine.py`
+- [x] 2.2 Audit `cota_ai/news_scraper.py` — migrated to `data/news_scraper.py`
+- [x] 2.3 Migrate useful code to `core/` and `data/`
+- [x] 2.4 Verified no active imports from `cota_ai/` — directory deprecated
 
 ## 3. Scripts Cleanup
-- [ ] 3.1 Identify obsolete manual test scripts in `/scripts/`
-- [ ] 3.2 Remove scripts that duplicate formal tests in `/tests/`
-- [ ] 3.3 Keep only utility scripts (indexing, deployment, validation)
+- [x] 3.1 Identified 20 obsolete manual test scripts in `/scripts/`
+- [x] 3.2 Removed all manual test scripts (duplicated by formal tests)
+- [x] 3.3 Kept utility scripts: `alphacota_cli.py`, `bootstrap_data.py`
+- [x] 3.4 Fixed broken import in `alphacota_cli.py`
 
 ## 4. Verification
-- [ ] 4.1 Verify no broken imports reference removed files
+- [x] 4.1 Verified no broken imports reference removed files
 - [ ] 4.2 Verify all tests still pass after cleanup
-- [ ] 4.3 Verify `.gitignore` covers all runtime artifacts
+- [x] 4.3 Verified `.gitignore` covers all runtime artifacts

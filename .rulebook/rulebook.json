@@ -1,24 +1,24 @@
 {
-  "version": "4.3.0",
-  "installedAt": "2026-03-12T20:06:35.562Z",
-  "updatedAt": "2026-03-12T20:06:35.582Z",
-  "projectId": "2fcf84f8-c2fa-43af-aea1-e151ee678df5",
+  "version": "4.4.1",
+  "installedAt": "2026-03-12T20:06:35.656Z",
+  "updatedAt": "2026-03-15T21:54:18.967Z",
+  "projectId": "alphacota",
   "mode": "full",
   "features": {
-    "watcher": true,
-    "agent": true,
+    "watcher": false,
+    "agent": false,
     "logging": true,
-    "telemetry": true,
+    "telemetry": false,
     "notifications": false,
     "dryRun": false,
-    "gitHooks": false,
+    "gitHooks": true,
     "repl": false,
-    "templates": false,
-    "context": false,
-    "health": false,
+    "templates": true,
+    "context": true,
+    "health": true,
     "plugins": false,
-    "parallel": false,
-    "smartContinue": false
+    "parallel": true,
+    "smartContinue": true
   },
   "coverageThreshold": 95,
   "language": "en",
@@ -62,19 +62,6 @@
       "requireApprovalForStories": "all"
     }
   },
-  "agentsMode": "full",
-  "monorepo": {
-    "detected": false,
-    "tool": null,
-    "packages": []
-  },
-  "languages": [
-    "python"
-  ],
-  "frameworks": [],
-  "modules": [],
-  "modular": true,
-  "rulebookDir": ".rulebook",
   "skills": {
     "enabled": [
       "languages/python",
@@ -106,5 +93,6 @@
       "core/rulebook",
       "core/workspace"
     ]
-  }
+  },
+  "agentsMode": "full"
 }

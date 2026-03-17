@@ -252,6 +252,121 @@ def test_analyse_warnings_generated():
 
 
 # ---------------------------------------------------------------------------
+# Edge cases para cobertura
+# ---------------------------------------------------------------------------
+
+def test_pearson_zero_stdev():
+    """Constant series (zero stdev) should return 0.0."""
+    constant = [0.05] * 12
+    assert calculate_pearson(constant, RETURNS_A) == 0.0
+
+
+def test_sector_concentration_empty_portfolio():
+    """Empty or zero-value portfolio should return empty dict."""
+    result = calculate_sector_concentration([], SECTOR_MAP)
+    assert result == {}
+
+
+def test_sector_concentration_zero_values():
+    """Portfolio with zero quantity should return empty dict."""
+    p = [{"ticker": "MXRF11", "quantidade": 0, "preco_atual": 10.0}]
+    assert calculate_sector_concentration(p, SECTOR_MAP) == {}
+
+
+def test_classify_concentration_moderado():
+    assert classify_concentration_risk(0.20) == "Moderado"
+
+
+def test_classify_concentration_concentrado():
+    assert classify_concentration_risk(0.30) == "Concentrado"
+
+
+def test_portfolio_volatility_short_series():
+    """Ticker with < 2 returns should have vol = 0."""
+    matrix = {TICKER_A: {TICKER_A: 1.0}}
+    weights = {TICKER_A: 1.0}
+    rs = {TICKER_A: [0.01]}  # Only 1 return
+    vol = calculate_portfolio_volatility(weights, rs, matrix)
+    assert vol == 0.0
+
+
+def test_diversification_ratio_short_series():
+    """Short series (< 2 returns) → vol = 0 → DR = 0.0."""
+    matrix = {TICKER_A: {TICKER_A: 1.0}}
+    weights = {TICKER_A: 1.0}
+    rs = {TICKER_A: [0.01]}
+    dr = calculate_diversification_ratio(weights, rs, matrix)
+    assert dr == 0.0
+
+
+def test_generate_warnings_moderate_hhi():
+    """HHI between 0.25 and 0.40 should produce moderate concentration warning."""
+    from core.correlation_engine import _generate_warnings
+    warnings = _generate_warnings([], 0.30, 1.5)
+    assert any("Moderada" in w or "moderada" in w for w in warnings)
+
+
+def test_generate_warnings_low_div_ratio():
+    """Diversification ratio < 1.1 should produce warning."""
+    from core.correlation_engine import _generate_warnings
+    warnings = _generate_warnings([], 0.10, 0.9)
+    assert any("Diversification Ratio" in w for w in warnings)
+
+
+def test_suggest_rebalance_with_correlation():
+    """Full rebalance suggestion with high-corr pair."""
+    tickers = [TICKER_A, TICKER_B, TICKER_C]
+    matrix = build_correlation_matrix(tickers, RETURN_SERIES)
+    target_weights = {TICKER_A: 0.40, TICKER_B: 0.30, TICKER_C: 0.30}
+    result = suggest_rebalance_with_correlation(
+        PORTFOLIO, target_weights, RETURN_SERIES, matrix, high_corr_threshold=0.80,
+    )
+    assert "suggestions" in result
+    assert "high_correlation_pairs" in result
+    assert "total_drift" in result
+    assert len(result["suggestions"]) == 3
+    for s in result["suggestions"]:
+        assert "ticker" in s
+        assert "action" in s
+        assert "drift" in s
+        assert "high_correlation_warning" in s
+
+
+def test_suggest_rebalance_corr_penalty():
+    """Ticker in high-corr pair with positive drift gets penalized priority."""
+    tickers = [TICKER_A, TICKER_B]
+    matrix = build_correlation_matrix(tickers, RETURN_SERIES)
+    # Set target so TICKER_A needs buying (positive drift) and is in high-corr pair
+    target_weights = {TICKER_A: 0.90, TICKER_B: 0.10}
+    result = suggest_rebalance_with_correlation(
+        PORTFOLIO[:2], target_weights, RETURN_SERIES, matrix, high_corr_threshold=0.80,
+    )
+    # Both tickers are perfectly correlated, so both should be flagged
+    for s in result["suggestions"]:
+        if s["ticker"] == TICKER_A:
+            assert s["high_correlation_warning"] is True
+
+
+def test_suggest_rebalance_manter_action():
+    """When drift is within tolerance, action should be 'manter'."""
+    tickers = [TICKER_A, TICKER_B]
+    matrix = build_correlation_matrix(tickers, RETURN_SERIES)
+    # Set target close to current weights so drift is small
+    valor_a = 100 * 10.0
+    valor_b = 10 * 155.0
+    total = valor_a + valor_b
+    target_weights = {
+        TICKER_A: round(valor_a / total, 4),
+        TICKER_B: round(valor_b / total, 4),
+    }
+    result = suggest_rebalance_with_correlation(
+        PORTFOLIO[:2], target_weights, RETURN_SERIES, matrix,
+    )
+    for s in result["suggestions"]:
+        assert s["action"] == "manter"
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 

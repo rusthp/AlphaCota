@@ -15,6 +15,7 @@ Garante fallback transparente para dados sintéticos quando:
 import os
 import random
 from typing import Optional
+from core.logger import logger
 
 
 # Importação defensiva do data_loader

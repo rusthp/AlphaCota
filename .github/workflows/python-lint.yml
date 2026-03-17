@@ -42,6 +42,5 @@ jobs:
     - name: Run mypy type checker
       # MONOREPO: Add working-directory if in subdirectory
       # working-directory: ./subdirectory
-      run: mypy . || echo "Type checking optional"
-      continue-on-error: true
+      run: mypy core/ services/ data/ api/ infra/
 

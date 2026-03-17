@@ -63,3 +63,65 @@ def test_valid_reinforcement_change_calculation(base_universe):
     assert sugestao.get("quantidade") == 2
     assert sugestao.get("valor_utilizado") == 80.0
     assert sugestao.get("valor_restante") == 20.0
+
+
+def test_zero_aporte_returns_error(base_universe):
+    sugestao = generateAporteSuggestion('ETF', [], base_universe, 0.0)
+    assert "erro" in sugestao
+
+
+def test_negative_aporte_returns_error(base_universe):
+    sugestao = generateAporteSuggestion('ETF', [], base_universe, -500.0)
+    assert "erro" in sugestao
+
+
+def test_empty_universe_returns_error():
+    sugestao = generateAporteSuggestion('ETF', [], [], 1000.0)
+    assert "erro" in sugestao
+
+
+def test_case2_one_asset_expands(base_universe):
+    """With 1 asset in class, should expand to a new one from universe."""
+    portfolio = [
+        {'ticker': 'IVVB11', 'classe': 'ETF', 'quantidade': 10, 'preco_atual': 250.0}
+    ]
+    sugestao = generateAporteSuggestion('ETF', portfolio, base_universe, 500.0)
+    assert sugestao.get("tipo_operacao") == "novo_ativo"
+    assert sugestao.get("ticker") == "BNDX11"  # next ETF in universe
+
+
+def test_case2_fallback_to_reinforce(base_universe):
+    """With 1 asset and no new candidates, should reinforce existing."""
+    universe = [
+        {'ticker': 'IVVB11', 'classe': 'ETF', 'ativo': True, 'preco_atual': 250.0},
+    ]
+    portfolio = [
+        {'ticker': 'IVVB11', 'classe': 'ETF', 'quantidade': 10, 'preco_atual': 250.0}
+    ]
+    sugestao = generateAporteSuggestion('ETF', portfolio, universe, 500.0)
+    assert sugestao.get("tipo_operacao") == "reforco"
+    assert sugestao.get("ticker") == "IVVB11"
+
+
+def test_case2_candidate_invalid_price_falls_through():
+    """If case 2 candidate has invalid price, falls to case 3 (reinforce)."""
+    universe = [
+        {'ticker': 'IVVB11', 'classe': 'ETF', 'ativo': True, 'preco_atual': 250.0},
+        {'ticker': 'BNDX11', 'classe': 'ETF', 'ativo': True, 'preco_atual': 0},
+    ]
+    portfolio = [
+        {'ticker': 'IVVB11', 'classe': 'ETF', 'quantidade': 10, 'preco_atual': 250.0}
+    ]
+    sugestao = generateAporteSuggestion('ETF', portfolio, universe, 500.0)
+    assert sugestao.get("tipo_operacao") == "reforco"
+
+
+def test_portfolio_asset_invalid_price():
+    """Reinforce with invalid price in portfolio asset."""
+    portfolio = [
+        {'ticker': 'BBSE3', 'classe': 'ACAO', 'quantidade': 10, 'preco_atual': 0},
+        {'ticker': 'WEGE3', 'classe': 'ACAO', 'quantidade': 5, 'preco_atual': 0},
+    ]
+    universe = [{'ticker': 'BBSE3', 'classe': 'ACAO', 'ativo': True, 'preco_atual': 30.0}]
+    sugestao = generateAporteSuggestion('ACAO', portfolio, universe, 100.0)
+    assert "erro" in sugestao

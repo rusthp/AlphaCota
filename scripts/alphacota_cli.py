@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.logger import get_logger
 from data.universe import get_tickers
 from data.fundamentals_scraper import fetch_fundamentals_bulk, get_cache_status
-from scripts.test_allocation_pipeline import run_pipeline
+from services.allocation_pipeline import run_allocation_pipeline as run_pipeline
 
 logger = get_logger("CLI")
 

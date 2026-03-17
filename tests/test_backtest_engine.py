@@ -21,7 +21,9 @@ from core.backtest_engine import (
     calculate_metrics,
     run_backtest,
     compare_against_benchmark,
+    format_metrics_report,
     _should_rebalance,
+    _rebalance_portfolio,
     BacktestResult,
     PerformanceMetrics,
 )
@@ -376,6 +378,121 @@ def test_rank_fiis():
     ranked = rank_fiis(fiis)
     assert ranked[0]["alpha_score"] >= ranked[1]["alpha_score"]
     assert ranked[0]["ticker"] == "MXRF11"
+
+
+# ---------------------------------------------------------------------------
+# Edge cases for coverage
+# ---------------------------------------------------------------------------
+
+def test_sharpe_short_series():
+    """Sharpe with < 2 returns should return 0.0."""
+    assert calculate_sharpe([0.01]) == 0.0
+
+
+def test_sortino_short_series():
+    """Sortino with < 2 returns should return 0.0."""
+    assert calculate_sortino([0.01]) == 0.0
+
+
+def test_sortino_with_downside():
+    """Sortino with actual downside months should return a value."""
+    returns = [0.02, -0.03, 0.01, -0.02, 0.03, -0.01, 0.02, -0.04, 0.01, -0.01, 0.02, -0.02]
+    result = calculate_sortino(returns, annual_risk_free_rate=0.10)
+    assert isinstance(result, float)
+
+
+def test_annual_volatility_short_series():
+    """Volatility with < 2 returns should return 0.0."""
+    assert calculate_annual_volatility([0.01]) == 0.0
+
+
+def test_should_rebalance_unknown_frequency():
+    """Unknown frequency should return False."""
+    assert _should_rebalance(3, "daily") is False
+
+
+def test_rebalance_portfolio_zero_value():
+    """Rebalance with zero total value should return copy of holdings."""
+    holdings = {"MXRF11": 100.0}
+    prices = {"MXRF11": 0.0}
+    weights = {"MXRF11": 1.0}
+    result = _rebalance_portfolio(holdings, prices, weights)
+    assert result == {"MXRF11": 100.0}
+
+
+def test_run_backtest_empty_tickers():
+    """Empty ticker list should raise ValueError."""
+    import pytest
+    with pytest.raises(ValueError, match="vazia"):
+        run_backtest([], {}, {}, {}, 100.0)
+
+
+def test_run_backtest_empty_price_series():
+    """Empty price series should raise ValueError."""
+    import pytest
+    with pytest.raises(ValueError, match="vazias"):
+        run_backtest(["MXRF11"], {"MXRF11": 1.0}, {"MXRF11": []}, {}, 100.0)
+
+
+def test_run_backtest_zero_weights():
+    """Zero weights should raise ValueError."""
+    import pytest
+    with pytest.raises(ValueError, match="inválidos"):
+        run_backtest(
+            ["MXRF11"], {"MXRF11": 0.0},
+            {"MXRF11": [10.0, 11.0]}, {}, 100.0,
+        )
+
+
+def test_compare_benchmark_short_series():
+    """Benchmark with < 2 prices should return error dict."""
+    tickers = ["MXRF11"]
+    price_series = {"MXRF11": _make_price_series(10.0, 12)}
+    result = run_backtest(tickers, {"MXRF11": 1.0}, price_series, {"MXRF11": [0.0] * 12}, 500.0)
+    comparison = compare_against_benchmark(result, [100.0], 500.0)
+    assert "erro" in comparison
+
+
+def test_format_metrics_report_basic():
+    """format_metrics_report should produce a string with key sections."""
+    metrics = PerformanceMetrics(
+        cagr=0.12, sharpe_ratio=1.5, sortino_ratio=2.0,
+        max_drawdown=-0.15, annual_volatility=0.18, total_return=0.36, num_months=24,
+    )
+    result = BacktestResult(
+        ticker_list=["MXRF11"], start_date="2023-01-01", end_date="2024-12-31",
+        monthly_contribution=500.0, initial_value=1000.0, final_value=1360.0,
+        total_invested=13000.0, metrics=metrics, monthly_snapshots=[],
+    )
+    report = format_metrics_report(result)
+    assert "BACKTEST" in report
+    assert "CAGR" in report
+    assert "Sharpe" in report
+
+
+def test_format_metrics_report_with_comparison():
+    """format_metrics_report with comparison should include benchmark section."""
+    metrics = PerformanceMetrics(
+        cagr=0.12, sharpe_ratio=1.5, sortino_ratio=2.0,
+        max_drawdown=-0.15, annual_volatility=0.18, total_return=0.36, num_months=24,
+    )
+    result = BacktestResult(
+        ticker_list=["MXRF11"], start_date="2023-01-01", end_date="2024-12-31",
+        monthly_contribution=500.0, initial_value=1000.0, final_value=1360.0,
+        total_invested=13000.0, metrics=metrics, monthly_snapshots=[],
+    )
+    comparison = {
+        "alpha": 0.05,
+        "bateu_benchmark": True,
+        "benchmark_ifix": {
+            "cagr": 0.07, "sharpe_ratio": 1.0, "sortino_ratio": 1.2,
+            "max_drawdown": -0.10, "annual_volatility": 0.12, "total_return": 0.20,
+            "valor_final": 1200.0,
+        },
+    }
+    report = format_metrics_report(result, comparison)
+    assert "BENCHMARK" in report
+    assert "Alpha" in report
 
 
 # ---------------------------------------------------------------------------
