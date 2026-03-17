@@ -30,7 +30,10 @@ from mcp.server.fastmcp import FastMCP
 # Create the MCP server
 mcp = FastMCP(
     "alphacota-financial-data",
-    version="1.0.0",
+    instructions=(
+        "Brazilian FII market data, macro indicators, portfolio analysis, "
+        "quantitative tools, and AI-powered insights for investment research."
+    ),
 )
 
 # Register all tools from submodules
