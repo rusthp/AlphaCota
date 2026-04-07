@@ -16,14 +16,15 @@ import statistics
 from typing import Optional
 from dataclasses import dataclass, field
 
-
 # ---------------------------------------------------------------------------
 # Data containers (dataclasses simples, sem lógica)
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class BacktestResult:
     """Resultado completo de um backtest."""
+
     ticker_list: list[str]
     start_date: str
     end_date: str
@@ -39,18 +40,20 @@ class BacktestResult:
 @dataclass
 class PerformanceMetrics:
     """Conjunto de métricas de performance de uma série de retornos."""
-    cagr: float                  # Crescimento Anual Composto
-    sharpe_ratio: float          # Relação retorno/risco total
-    sortino_ratio: float         # Relação retorno/risco downside
-    max_drawdown: float          # Maior queda pico-a-fundo (negativo)
-    annual_volatility: float     # Volatilidade anualizada
-    total_return: float          # Retorno total percentual
-    num_months: int              # Número de meses simulados
+
+    cagr: float  # Crescimento Anual Composto
+    sharpe_ratio: float  # Relação retorno/risco total
+    sortino_ratio: float  # Relação retorno/risco downside
+    max_drawdown: float  # Maior queda pico-a-fundo (negativo)
+    annual_volatility: float  # Volatilidade anualizada
+    total_return: float  # Retorno total percentual
+    num_months: int  # Número de meses simulados
 
 
 # ---------------------------------------------------------------------------
 # Funções de métricas puras
 # ---------------------------------------------------------------------------
+
 
 def calculate_cagr(
     initial_value: float,
@@ -129,7 +132,7 @@ def calculate_sortino(
     if not downside:
         return 0.0  # Sem meses negativos → Sortino indefinido
 
-    downside_variance = sum(r ** 2 for r in downside) / len(downside)
+    downside_variance = sum(r**2 for r in downside) / len(downside)
     downside_std = math.sqrt(downside_variance)
 
     if downside_std == 0:
@@ -234,6 +237,7 @@ def calculate_metrics(
 # Motor de rebalanceamento
 # ---------------------------------------------------------------------------
 
+
 def _should_rebalance(month: int, frequency: str) -> bool:
     """
     Determina se o mês corrente é um mês de rebalanceamento.
@@ -271,9 +275,7 @@ def _rebalance_portfolio(
     Returns:
         dict[str, float]: Novo holdings rebalanceado.
     """
-    total_value = sum(
-        holdings.get(t, 0.0) * prices.get(t, 0.0) for t in prices
-    )
+    total_value = sum(holdings.get(t, 0.0) * prices.get(t, 0.0) for t in prices)
     if total_value <= 0:
         return holdings.copy()
 
@@ -289,6 +291,7 @@ def _rebalance_portfolio(
 # ---------------------------------------------------------------------------
 # Motor principal de backtest
 # ---------------------------------------------------------------------------
+
 
 def run_backtest(
     tickers: list[str],
@@ -332,8 +335,7 @@ def run_backtest(
     for t in tickers:
         if t not in price_series:
             raise ValueError(
-                f"Ticker '{t}' não possui série de preços. "
-                f"Verifique os dados em data/historical_prices/."
+                f"Ticker '{t}' não possui série de preços. " f"Verifique os dados em data/historical_prices/."
             )
 
     # Garantir que todos têm o mesmo número de meses
@@ -393,9 +395,7 @@ def run_backtest(
             holdings = _rebalance_portfolio(holdings, current_prices, norm_weights)
 
         # 5) Calcular valor total do portfólio
-        portfolio_value = sum(
-            holdings.get(t, 0.0) * current_prices.get(t, 0.0) for t in tickers
-        )
+        portfolio_value = sum(holdings.get(t, 0.0) * current_prices.get(t, 0.0) for t in tickers)
         portfolio_values.append(portfolio_value)
 
         # 6) Snapshot do mês
@@ -415,8 +415,8 @@ def run_backtest(
 
     return BacktestResult(
         ticker_list=tickers,
-        start_date="",       # Preenchido pelo caller com string de data
-        end_date="",         # Preenchido pelo caller com string de data
+        start_date="",  # Preenchido pelo caller com string de data
+        end_date="",  # Preenchido pelo caller com string de data
         monthly_contribution=monthly_contribution,
         initial_value=initial_capital,
         final_value=portfolio_values[-1] if portfolio_values else 0.0,

@@ -16,10 +16,10 @@ import math
 import random
 import statistics
 
-
 # ---------------------------------------------------------------------------
 # Extração de features
 # ---------------------------------------------------------------------------
+
 
 def extract_features(monthly_returns: list[float]) -> dict[str, float]:
     """
@@ -39,8 +39,7 @@ def extract_features(monthly_returns: list[float]) -> dict[str, float]:
         dict com as 5 features numéricas.
     """
     if not monthly_returns:
-        return {"retorno_medio": 0, "volatilidade": 0,
-                "retorno_12m": 0, "max_drawdown": 0, "skewness": 0}
+        return {"retorno_medio": 0, "volatilidade": 0, "retorno_12m": 0, "max_drawdown": 0, "skewness": 0}
 
     # Retorno médio
     avg = sum(monthly_returns) / len(monthly_returns)
@@ -52,7 +51,7 @@ def extract_features(monthly_returns: list[float]) -> dict[str, float]:
     window = monthly_returns[-12:] if len(monthly_returns) >= 12 else monthly_returns
     r12m = 1.0
     for r in window:
-        r12m *= (1 + r)
+        r12m *= 1 + r
     r12m -= 1.0
 
     # Max drawdown
@@ -60,7 +59,7 @@ def extract_features(monthly_returns: list[float]) -> dict[str, float]:
     wealth = 1.0
     worst = 0.0
     for r in monthly_returns:
-        wealth *= (1 + r)
+        wealth *= 1 + r
         if wealth > peak:
             peak = wealth
         dd = (wealth - peak) / peak
@@ -76,10 +75,10 @@ def extract_features(monthly_returns: list[float]) -> dict[str, float]:
 
     return {
         "retorno_medio": round(avg, 6),
-        "volatilidade":  round(vol, 6),
-        "retorno_12m":   round(r12m, 6),
-        "max_drawdown":  round(worst, 6),
-        "skewness":      round(skew, 4),
+        "volatilidade": round(vol, 6),
+        "retorno_12m": round(r12m, 6),
+        "max_drawdown": round(worst, 6),
+        "skewness": round(skew, 4),
     }
 
 
@@ -95,9 +94,8 @@ def extract_feature_matrix(
     Returns:
         tuple: (lista de tickers, matriz de features [[f1, f2, ...], ...])
     """
-    tickers  = list(return_series.keys())
-    features_keys = ["retorno_medio", "volatilidade", "retorno_12m",
-                     "max_drawdown", "skewness"]
+    tickers = list(return_series.keys())
+    features_keys = ["retorno_medio", "volatilidade", "retorno_12m", "max_drawdown", "skewness"]
     matrix = []
     for t in tickers:
         feats = extract_features(return_series[t])
@@ -108,6 +106,7 @@ def extract_feature_matrix(
 # ---------------------------------------------------------------------------
 # Normalização (min-max)
 # ---------------------------------------------------------------------------
+
 
 def normalize_matrix(matrix: list[list[float]]) -> list[list[float]]:
     """
@@ -140,6 +139,7 @@ def normalize_matrix(matrix: list[list[float]]) -> list[list[float]]:
 # ---------------------------------------------------------------------------
 # K-Means
 # ---------------------------------------------------------------------------
+
 
 def _euclidean(a: list[float], b: list[float]) -> float:
     return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
@@ -213,6 +213,7 @@ def auto_k(n_ativos: int) -> int:
 # API pública
 # ---------------------------------------------------------------------------
 
+
 def cluster_portfolio(
     return_series: dict[str, list[float]],
     k: int | None = None,
@@ -247,7 +248,7 @@ def cluster_portfolio(
     k_used = min(k_used, len(tickers))
 
     norm_matrix = normalize_matrix(matrix)
-    raw_labels  = kmeans(norm_matrix, k_used, seed=seed)
+    raw_labels = kmeans(norm_matrix, k_used, seed=seed)
 
     # Organizar resultado
     clusters: dict[int, list[str]] = {}
@@ -264,11 +265,11 @@ def cluster_portfolio(
     features_map = {t: extract_features(return_series[t]) for t in tickers}
 
     return {
-        "clusters":      clusters,
+        "clusters": clusters,
         "cluster_names": cluster_names,
-        "labels":        labels_map,
-        "features":      features_map,
-        "k":             k_used,
+        "labels": labels_map,
+        "features": features_map,
+        "k": k_used,
     }
 
 

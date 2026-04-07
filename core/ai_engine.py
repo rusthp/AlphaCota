@@ -11,6 +11,7 @@ Migrado de cota_ai/ai_service.py com melhorias:
 
 import os
 from core.logger import logger
+from core.ai_cache import get_cached_sentiment, save_cached_sentiment
 
 try:
     from groq import Groq
@@ -59,6 +60,12 @@ def analyze_fii_news(ticker: str, news_list: list[dict], api_key: str | None = N
     """
     key = api_key or os.getenv("GROQ_API_KEY")
 
+    cached = get_cached_sentiment(ticker)
+    if cached:
+        logger.info(f"Usando sentimento em cache para {ticker}")
+        cached["news"] = news_list # anexando
+        return cached
+
     if not key:
         return {"success": False, "error": "GROQ_API_KEY nao configurada"}
 
@@ -106,6 +113,27 @@ def analyze_fii_news(ticker: str, news_list: list[dict], api_key: str | None = N
             max_tokens=1024,
         )
         raw = completion.choices[0].message.content
-        return {"success": True, "raw_response": raw, "ticker": ticker, "news_count": len(news_list)}
+
+        # Extrair sentiment_score estruturado a partir da resposta textual
+        raw_upper = raw.upper()
+        if "POSITIVO" in raw_upper:
+            sentiment_score = 1.0
+        elif "NEGATIVO" in raw_upper:
+            sentiment_score = -1.0
+        else:
+            sentiment_score = 0.0
+
+        response_dict = {
+            "success": True,
+            "raw_response": raw,
+            "ticker": ticker,
+            "news_count": len(news_list),
+            "sentiment_score": sentiment_score,
+        }
+
+        # Save to SQLite
+        save_cached_sentiment(response_dict)
+
+        return response_dict
     except Exception as e:
         return {"success": False, "error": f"Erro ao acionar Groq: {str(e)}"}

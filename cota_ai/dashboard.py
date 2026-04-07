@@ -1,3 +1,7 @@
+# DEPRECATED: This Streamlit dashboard has been replaced by the React frontend.
+# Run `python start.py` to use the new frontend (React + FastAPI).
+# This file is kept for reference only and will be removed in a future version.
+
 import streamlit as st
 import sqlite3
 import pandas as pd

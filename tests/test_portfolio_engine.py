@@ -107,3 +107,24 @@ class TestCalculateRebalanceSuggestion:
         result = calculate_rebalance_suggestion(ativos, alvo, 0.0)
         total = sum(s["valor_aportar"] for s in result["sugestao"])
         assert total == pytest.approx(0.0)
+
+    def test_invalid_ticker_in_ativos_raises(self):
+        """Empty ticker string inside ativos_atuais raises ValueError (line 73)."""
+        ativos = [{"ticker": "", "valor": 5000.0}]
+        alvo = {"HGLG11": 1.0}
+        with pytest.raises(ValueError, match="inválido"):
+            calculate_rebalance_suggestion(ativos, alvo, 1000.0)
+
+    def test_negative_valor_in_ativos_raises(self):
+        """Negative valor inside ativos_atuais raises ValueError (line 75)."""
+        ativos = [{"ticker": "HGLG11", "valor": -500.0}]
+        alvo = {"HGLG11": 1.0}
+        with pytest.raises(ValueError, match="negativo"):
+            calculate_rebalance_suggestion(ativos, alvo, 1000.0)
+
+    def test_negative_target_allocation_raises(self):
+        """Negative target allocation percentage raises ValueError (line 84)."""
+        ativos = [{"ticker": "HGLG11", "valor": 5000.0}]
+        alvo = {"HGLG11": -0.5}
+        with pytest.raises(ValueError, match="negativa"):
+            calculate_rebalance_suggestion(ativos, alvo, 1000.0)

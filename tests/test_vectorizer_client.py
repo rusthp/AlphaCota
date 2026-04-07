@@ -135,17 +135,40 @@ class TestSearch:
         client = VectorizerClient()
         assert client.search("anything") == []
 
-    def test_reauth_on_401(self, monkeypatch):
+    def test_reauth_on_401_succeeds_then_returns_results(self, monkeypatch):
+        """After a 401, re-auth succeeds and the second search call returns results."""
         client, mock_requests = self._make_client(monkeypatch)
+
         resp_401 = MagicMock()
         resp_401.status_code = 401
+
+        resp_auth_ok = MagicMock()
+        resp_auth_ok.status_code = 200
+        resp_auth_ok.json.return_value = {"access_token": "new_token"}
+
         resp_200 = MagicMock()
         resp_200.status_code = 200
         resp_200.json.return_value = {"results": []}
-        mock_requests.post.side_effect = [resp_401, MagicMock(status_code=200, json=MagicMock(return_value={"access_token": "new"})), resp_200]
 
-        # Re-auth attempt: post is called for search, then login, then search again
-        # But _authenticate uses requests.post directly, so side_effect order matters
+        # Call order: (1) initial search → 401, (2) re-auth POST → 200+token, (3) retry search → 200
+        mock_requests.post.side_effect = [resp_401, resp_auth_ok, resp_200]
+
+        results = client.search("test")
+        assert results == []  # empty results list, no exception
+
+    def test_reauth_on_401_fails_returns_empty(self, monkeypatch):
+        """After a 401, re-auth also fails → return [] immediately (line 124)."""
+        client, mock_requests = self._make_client(monkeypatch)
+
+        resp_401 = MagicMock()
+        resp_401.status_code = 401
+
+        resp_auth_fail = MagicMock()
+        resp_auth_fail.status_code = 403  # auth rejected
+
+        # Call order: (1) initial search → 401, (2) re-auth POST → 403 (no token)
+        mock_requests.post.side_effect = [resp_401, resp_auth_fail]
+
         results = client.search("test")
         assert results == []
 
@@ -182,6 +205,30 @@ class TestListCollections:
     def test_empty_on_failure(self, monkeypatch):
         monkeypatch.setattr(vc, "HAS_REQUESTS", False)
         client = VectorizerClient()
+        assert client.list_collections() == []
+
+    def test_non_200_returns_empty(self, monkeypatch):
+        """list_collections with non-200 response returns [] (line 167)."""
+        monkeypatch.setattr(vc, "HAS_REQUESTS", True)
+        mock_requests = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 503
+        mock_requests.get.return_value = mock_resp
+        monkeypatch.setattr(vc, "requests", mock_requests, raising=False)
+
+        client = VectorizerClient()
+        client._token = "tok"
+        assert client.list_collections() == []
+
+    def test_exception_returns_empty(self, monkeypatch):
+        """list_collections that raises an exception returns [] (lines 168-169)."""
+        monkeypatch.setattr(vc, "HAS_REQUESTS", True)
+        mock_requests = MagicMock()
+        mock_requests.get.side_effect = ConnectionError("timeout")
+        monkeypatch.setattr(vc, "requests", mock_requests, raising=False)
+
+        client = VectorizerClient()
+        client._token = "tok"
         assert client.list_collections() == []
 
 

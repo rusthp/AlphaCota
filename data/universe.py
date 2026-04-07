@@ -9,7 +9,6 @@ com metadados de liquidez mínima e status no IFIX.
 Funções puras, sem dependências externas.
 """
 
-
 # ---------------------------------------------------------------------------
 # Classificação setorial oficial
 # ---------------------------------------------------------------------------
@@ -48,59 +47,50 @@ _UNIVERSE_RAW: list[tuple[str, str, str, bool]] = [
     ("CPTS11", "Papel (CRI)", "Capitânia Securities", True),
     ("KNIP11", "Papel (CRI)", "Kinea Índices de Preços", True),
     ("RBRR11", "Papel (CRI)", "RBR Rendimento High Grade", True),
-    ("IRDM11", "Papel (CRI)", "Iridium Recebíveis", True),
-    ("PLCR11", "Papel (CRI)", "Plural Recebíveis", True),
-    ("CVBI11", "Papel (CRI)", "VBI CRI", True),
-
+    # IRDM11 — delistado (sem dados yfinance desde 2026-03)
+    # PLCR11 — delistado (sem dados de preço desde 2026-03)
+    # CVBI11 — delistado (sem dados de preço desde 2026-03)
     # ── Logística ──
     ("HGLG11", "Logística", "CSHG Logística", True),
     ("XPLG11", "Logística", "XP Log", True),
     ("BTLG11", "Logística", "BTG Logístico", True),
     ("VILG11", "Logística", "Vinci Logística", True),
     ("BRCO11", "Logística", "Bresco Logística", True),
-    ("SDIL11", "Logística", "SDI Logística Rio", True),
+    # SDIL11 — delistado (sem dados de preço desde 2026-03)
     ("LVBI11", "Logística", "VBI Logístico", True),
     ("GARE11", "Logística", "Guardian RE", True),
-
     # ── Shopping ──
     ("XPML11", "Shopping", "XP Malls", True),
-    ("MALL11", "Shopping", "Malls Brasil Plural", True),
+    # MALL11 — sem dados yfinance (no timezone found, 2026-03)
     ("VISC11", "Shopping", "Vinci Shopping Centers", True),
     ("HSML11", "Shopping", "HSI Malls", True),
-
     # ── Lajes Corporativas ──
     ("BRCR11", "Lajes Corp.", "BTG Corp. Office", True),
     ("JSRE11", "Lajes Corp.", "JS Real Estate", True),
     ("PVBI11", "Lajes Corp.", "VBI Prime Properties", True),
     ("HGRE11", "Lajes Corp.", "CSHG Real Estate", True),
     ("RCRB11", "Lajes Corp.", "Rio Bravo Renda Corp.", True),
-
     # ── Fundo de Fundos ──
-    ("BCFF11", "Fundo de Fundos", "BTG FoF", True),
+    # BCFF11 — sem dados yfinance (no timezone found, 2026-03)
     ("HFOF11", "Fundo de Fundos", "Hedge TOP FOFII", True),
-    ("RBFF11", "Fundo de Fundos", "Rio Bravo FoF", True),
-    ("MGFF11", "Fundo de Fundos", "Mogno FoF", True),
+    # RBFF11 — delistado (sem dados yfinance desde 2026-03)
+    # MGFF11 — sem dados yfinance (no timezone found, 2026-03)
     ("KFOF11", "Fundo de Fundos", "Kinea FoF", True),
-
     # ── Híbrido ──
     ("HGBS11", "Híbrido", "CSHG Brasil Shopping", True),
     ("KNRI11", "Híbrido", "Kinea Renda Imobiliária", True),
     ("RBRF11", "Híbrido", "RBR Alpha", True),
     ("TRXF11", "Híbrido", "TRX Real Estate", True),
     ("RBRP11", "Híbrido", "RBR Properties", True),
-
     # ── Agro ──
     ("RZTR11", "Agro", "Riza Terrax", True),
-    ("RURA11", "Agro", "Itaú Asset Rural", True),
-
+    # RURA11 — sem indicadores no StatusInvest (2026-03)
     # ── Saúde ──
     ("HCTR11", "Saúde", "Hectare CE", True),
     ("CARE11", "Saúde", "Brazilian Graveyard", False),
-
     # ── Residencial ──
     ("MFII11", "Residencial", "Mérito Desenvolvimento", True),
     ("TGAR11", "Residencial", "TG Ativo Real", True),
-
     # ── Educacional ──
     ("RECT11", "Educacional", "REC Renda Imobiliária", True),
 ]
@@ -109,6 +99,7 @@ _UNIVERSE_RAW: list[tuple[str, str, str, bool]] = [
 # ---------------------------------------------------------------------------
 # API Pública
 # ---------------------------------------------------------------------------
+
 
 def get_universe(
     ifix_only: bool = True,
@@ -130,12 +121,14 @@ def get_universe(
             continue
         if sectors and setor not in sectors:
             continue
-        results.append({
-            "ticker": ticker,
-            "setor": setor,
-            "nome": nome,
-            "ifix": ifix,
-        })
+        results.append(
+            {
+                "ticker": ticker,
+                "setor": setor,
+                "nome": nome,
+                "ifix": ifix,
+            }
+        )
     return results
 
 

@@ -15,14 +15,18 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
+
 class TokenData(BaseModel):
     user_id: Optional[int] = None
+
 
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
+
 
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
@@ -30,6 +34,7 @@ def create_access_token(data: dict) -> str:
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, settings.secret_key, algorithm=ALGORITHM)
     return encoded_jwt
+
 
 def decode_access_token(token: str) -> dict:
     try:
@@ -41,6 +46,7 @@ def decode_access_token(token: str) -> dict:
             detail="Não foi possível validar as credenciais",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
 
 def get_current_user(token: str = Depends(oauth2_scheme)) -> int:
     payload = decode_access_token(token)

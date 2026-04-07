@@ -1,6 +1,8 @@
 # core/quant_engine.py
 import math
 from core.logger import logger
+
+
 def normalize_positive(value: float, min_val: float, max_val: float) -> float:
     """
     Normaliza um indicador financeiro (onde maior é melhor) para uma escala de 0.0 a 1.0.
@@ -39,7 +41,7 @@ def normalize_inverse(value: float, min_val: float, max_val: float) -> float:
 
 def calculate_quality_score(data: dict[str, float]) -> float:
     """
-    Calcula um score de qualidade (0 a 100) baseado em valuation, rentabilidade, 
+    Calcula um score de qualidade (0 a 100) baseado em valuation, rentabilidade,
     crescimento e solidez financeira.
 
     Args:
@@ -68,12 +70,7 @@ def calculate_quality_score(data: dict[str, float]) -> float:
     score_liquidity = normalize_positive(data.get("current_ratio", 1.5), 1.0, 3.0)
     stability_score = (score_debt + score_liquidity) / 2.0
 
-    total_score = (
-        0.25 * valuation_score +
-        0.30 * profitability_score +
-        0.20 * growth_score +
-        0.25 * stability_score
-    )
+    total_score = 0.25 * valuation_score + 0.30 * profitability_score + 0.20 * growth_score + 0.25 * stability_score
 
     return round(total_score * 100, 2)
 
@@ -93,7 +90,7 @@ def calculate_altman_z(data: dict[str, float]) -> float:
 
     # Proteção contra divisão por zero (empresas sem ativos ou passivos reportados)
     if total_assets <= 0 or total_liabilities <= 0:
-        return 0.0 
+        return 0.0
 
     a = data.get("working_capital", 0.0) / total_assets
     b = data.get("retained_earnings", 0.0) / total_assets
@@ -140,13 +137,13 @@ def calculate_moving_average(prices: list[float], window: int) -> float:
 
     Returns:
         float: Valor da média móvel.
-        
+
     Raises:
         ValueError: Se a quantidade de preços for menor que a janela solicitada.
     """
     if len(prices) < window:
         raise ValueError(f"Dados insuficientes para média móvel de {window} períodos.")
-    
+
     return sum(prices[-window:]) / window
 
 
@@ -155,12 +152,12 @@ def calculate_momentum_score(prices: list[float]) -> float:
     Calcula o score de momentum (0 a 100) baseado em tendências e inclinações de médias móveis.
 
     Args:
-        prices (list[float]): Lista de preços históricos mensais (mínimo de 12 meses, 
+        prices (list[float]): Lista de preços históricos mensais (mínimo de 12 meses,
                               sendo o último item o preço atual).
 
     Returns:
         float: Score normalizado de momentum (0.0 a 100.0).
-        
+
     Raises:
         ValueError: Se a lista contiver menos de 12 meses de histórico.
     """
@@ -203,13 +200,68 @@ def calculate_final_score(fundamental_score: float, momentum_score: float) -> fl
     """
     # Proteção contra "faca caindo": reduz o score total em 20% se o momentum for péssimo
     penalty = 0.8 if momentum_score < 30.0 else 1.0
-    
+
     final_score = (0.8 * fundamental_score) + (0.2 * momentum_score)
-    
+
     return round(final_score * penalty, 2)
 
 
-def evaluate_company(ticker: str, data: dict[str, float], historical_prices: list[float] = None) -> dict[str, float | str]:
+def calculate_fii_score(data: dict[str, float]) -> dict[str, float]:
+    """
+    Calcula o score de qualidade de um FII (0-100) usando métricas específicas de FIIs.
+
+    Quatro dimensões, cada uma valendo até 25 pontos:
+      - Fundamentos : P/VP (15pts) + endividamento (10pts)
+      - Rendimento  : DY (15pts) + consistência de dividendos (10pts)
+      - Risco       : vacância física (25pts)
+      - Liquidez    : liquidez diária negociada (25pts)
+
+    Args:
+        data (dict): Chaves relevantes:
+            pvp, debt_ratio, dividend_yield, dividend_consistency,
+            vacancy_rate (ou vacancia), daily_liquidity (ou liquidez_diaria)
+
+    Returns:
+        dict com fundamentos, rendimento, risco, liquidez (cada 0–25) e total (0–100).
+    """
+    # --- Fundamentos (max 25): P/VP (15pts) + endividamento (10pts) ---
+    pvp = float(data.get("pvp", 1.0))
+    debt_ratio = float(data.get("debt_ratio", 0.3))
+    score_pvp = normalize_inverse(pvp, 0.5, 1.5) * 15.0
+    score_debt = normalize_inverse(debt_ratio, 0.0, 0.8) * 10.0
+    fundamentos = round(min(25.0, score_pvp + score_debt), 2)
+
+    # --- Rendimento (max 25): DY (15pts) + consistência (10pts) ---
+    dy = float(data.get("dividend_yield", 0.08))
+    consistency = min(1.0, max(0.0, float(data.get("dividend_consistency", 0.5))))
+    score_dy = normalize_positive(dy, 0.04, 0.13) * 15.0
+    score_consistency = consistency * 10.0
+    rendimento = round(min(25.0, score_dy + score_consistency), 2)
+
+    # --- Risco (max 25): vacância ---
+    vacancy = float(data.get("vacancy_rate", data.get("vacancia", 0.1)))
+    score_vacancy = normalize_inverse(vacancy, 0.0, 0.30) * 25.0
+    risco = round(min(25.0, score_vacancy), 2)
+
+    # --- Liquidez (max 25): liquidez diária ---
+    liquidity = float(data.get("daily_liquidity", data.get("liquidez_diaria", 500_000)))
+    score_liquidity = normalize_positive(liquidity, 100_000, 5_000_000) * 25.0
+    liquidez = round(min(25.0, score_liquidity), 2)
+
+    total = round(fundamentos + rendimento + risco + liquidez, 2)
+
+    return {
+        "fundamentos": fundamentos,
+        "rendimento": rendimento,
+        "risco": risco,
+        "liquidez": liquidez,
+        "total": total,
+    }
+
+
+def evaluate_company(
+    ticker: str, data: dict[str, float], historical_prices: list[float] = None
+) -> dict[str, float | str]:
     """
     Agrega as análises quantitativas de uma empresa retornando seu score fundamentalista,
     score de momentum e análise de risco de falência.
@@ -225,11 +277,11 @@ def evaluate_company(ticker: str, data: dict[str, float], historical_prices: lis
     quality_score = calculate_quality_score(data)
     z_score = calculate_altman_z(data)
     risk_classification = classify_bankruptcy_risk(z_score)
-    
+
     momentum_score = 0.0
     if historical_prices and len(historical_prices) >= 12:
         momentum_score = calculate_momentum_score(historical_prices)
-    
+
     final_score = calculate_final_score(quality_score, momentum_score) if momentum_score > 0 else quality_score
 
     return {
@@ -238,5 +290,5 @@ def evaluate_company(ticker: str, data: dict[str, float], historical_prices: lis
         "momentum_score": momentum_score,
         "final_score": final_score,
         "altman_z_score": z_score,
-        "risk_classification": risk_classification
+        "risk_classification": risk_classification,
     }

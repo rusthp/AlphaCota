@@ -45,14 +45,12 @@ class TestFetchSgsMonthly:
             assert len(result) == 2
 
     def test_returns_empty_without_bcb(self, tmp_path):
-        with patch.object(macro, "_MACRO_DIR", str(tmp_path)), \
-             patch.object(macro, "HAS_BCB", False):
+        with patch.object(macro, "_MACRO_DIR", str(tmp_path)), patch.object(macro, "HAS_BCB", False):
             result = macro._fetch_sgs_monthly(11, "empty_test", "2025-01-01", "2025-12-31", force_refresh=True)
             assert result == []
 
     def test_force_refresh_skips_cache(self, tmp_path):
-        with patch.object(macro, "_MACRO_DIR", str(tmp_path)), \
-             patch.object(macro, "HAS_BCB", False):
+        with patch.object(macro, "_MACRO_DIR", str(tmp_path)), patch.object(macro, "HAS_BCB", False):
             rows = [{"date": "2025-01-15", "value": "10.5"}]
             macro._save_macro_csv("refresh_test", rows, ["date", "value"])
             result = macro._fetch_sgs_monthly(11, "refresh_test", "2025-01-01", "2025-12-31", force_refresh=True)
@@ -61,11 +59,52 @@ class TestFetchSgsMonthly:
     def test_bcb_api_exception_returns_empty(self, tmp_path):
         mock_sgs = MagicMock()
         mock_sgs.get.side_effect = Exception("API down")
-        with patch.object(macro, "_MACRO_DIR", str(tmp_path)), \
-             patch.object(macro, "HAS_BCB", True), \
-             patch.object(macro, "sgs", mock_sgs):
+        with (
+            patch.object(macro, "_MACRO_DIR", str(tmp_path)),
+            patch.object(macro, "HAS_BCB", True),
+            patch.object(macro, "sgs", mock_sgs),
+        ):
             result = macro._fetch_sgs_monthly(11, "error_test", "2025-01-01", "2025-12-31", force_refresh=True)
             assert result == []
+
+    def test_bcb_api_success_saves_and_returns_rows(self, tmp_path):
+        """BCB API returns a non-empty DataFrame: rows are saved and returned (lines 99-103)."""
+        import pandas as pd
+
+        idx = pd.to_datetime(["2025-01-15", "2025-02-15", "2025-03-15"])
+        df = pd.DataFrame({"selic_bcb": [10.5, 10.6, 10.7]}, index=idx)
+
+        mock_sgs = MagicMock()
+        mock_sgs.get.return_value = df
+
+        with (
+            patch.object(macro, "_MACRO_DIR", str(tmp_path)),
+            patch.object(macro, "HAS_BCB", True),
+            patch.object(macro, "sgs", mock_sgs),
+        ):
+            result = macro._fetch_sgs_monthly(
+                11, "selic_bcb", "2025-01-01", "2025-12-31", force_refresh=True
+            )
+        assert len(result) == 3
+        assert result[0]["date"] == "2025-01-15"
+        assert float(result[0]["value"]) == pytest.approx(10.5)
+
+    def test_bcb_api_returns_empty_df_yields_empty(self, tmp_path):
+        """BCB API returns an empty DataFrame: must return [] (line 99-100)."""
+        import pandas as pd
+
+        mock_sgs = MagicMock()
+        mock_sgs.get.return_value = pd.DataFrame()
+
+        with (
+            patch.object(macro, "_MACRO_DIR", str(tmp_path)),
+            patch.object(macro, "HAS_BCB", True),
+            patch.object(macro, "sgs", mock_sgs),
+        ):
+            result = macro._fetch_sgs_monthly(
+                11, "empty_df", "2025-01-01", "2025-12-31", force_refresh=True
+            )
+        assert result == []
 
 
 class TestGetSelicHistory:
@@ -117,17 +156,21 @@ class TestGetCurrentRiskFreeRate:
             assert rate == pytest.approx(0.1075)
 
     def test_bcb_annualization(self):
-        monthly_rows = [{"date": f"2025-{m:02d}-01", "value": "0.8"} for m in range(1, 13)]
-        with patch.object(macro, "get_selic_history", return_value=(monthly_rows, "bcb")):
+        # SGS 11 returns daily Selic rate in % per day (~0.0567%/day ≈ 14.75%/year)
+        daily_rows = [{"date": f"2025-{m:02d}-01", "value": "0.0567"} for m in range(1, 13)]
+        with patch.object(macro, "get_selic_history", return_value=(daily_rows, "bcb")):
             rate, source = macro.get_current_risk_free_rate()
             assert source == "bcb"
-            assert 0.05 < rate < 0.20
+            # (1 + 0.000567)^252 - 1 ≈ 0.154 (15.4% a.a.)
+            assert 0.10 < rate < 0.25
 
 
 class TestGetMacroSnapshot:
     def test_snapshot_structure_with_fallback(self):
-        with patch.object(macro, "get_current_risk_free_rate", return_value=(0.1075, "fallback")), \
-             patch.object(macro, "get_ipca_history", return_value=([], "fallback")):
+        with (
+            patch.object(macro, "get_current_risk_free_rate", return_value=(0.1075, "fallback")),
+            patch.object(macro, "get_ipca_history", return_value=([], "fallback")),
+        ):
             snap = macro.get_macro_snapshot()
             assert "selic_anual" in snap
             assert "cdi_anual" in snap
@@ -137,8 +180,10 @@ class TestGetMacroSnapshot:
 
     def test_snapshot_with_bcb_data(self):
         ipca_rows = [{"date": f"2025-{m:02d}-01", "value": "0.4"} for m in range(1, 13)]
-        with patch.object(macro, "get_current_risk_free_rate", return_value=(0.1075, "bcb")), \
-             patch.object(macro, "get_ipca_history", return_value=(ipca_rows, "bcb")):
+        with (
+            patch.object(macro, "get_current_risk_free_rate", return_value=(0.1075, "bcb")),
+            patch.object(macro, "get_ipca_history", return_value=(ipca_rows, "bcb")),
+        ):
             snap = macro.get_macro_snapshot()
             assert snap["fonte_selic"] == "bcb"
             assert snap["fonte_ipca"] == "bcb"

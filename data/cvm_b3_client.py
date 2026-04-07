@@ -7,7 +7,7 @@ Fontes:
 - B3 API publica: cotacoes, volumes, composicao IFIX
 
 A CVM disponibiliza dados de FIIs via portal de dados abertos:
-https://dados.cvm.gov.br/dados/FII/
+https://dados.cvm.gov.br/dados/FI/
 
 A B3 tem endpoints publicos para composicao de indices e cotacoes.
 """
@@ -36,10 +36,12 @@ HAS_DEPS = _HAS_REQUESTS
 # Constantes
 # ---------------------------------------------------------------------------
 
-# CVM Dados Abertos — portal oficial
-_CVM_FII_INFO_URL = "https://dados.cvm.gov.br/dados/FII/CAD/DADOS/inf_cadastral_fi.csv"
+# CVM Dados Abertos — portal oficial (cadastro unificado de todos os fundos)
+_CVM_FII_INFO_URL = "https://dados.cvm.gov.br/dados/FI/CAD/DADOS/cad_fi.csv"
 _CVM_FII_MONTHLY_URL = "https://dados.cvm.gov.br/dados/FII/DOC/INF_MENSAL/DADOS/inf_mensal_fii_{year}{month:02d}.csv"
-_CVM_FII_PROVENTO_URL = "https://dados.cvm.gov.br/dados/FII/DOC/INF_MENSAL/DADOS/inf_mensal_fii_complemento_{year}{month:02d}.csv"
+_CVM_FII_PROVENTO_URL = (
+    "https://dados.cvm.gov.br/dados/FII/DOC/INF_MENSAL/DADOS/inf_mensal_fii_complemento_{year}{month:02d}.csv"
+)
 
 # B3 endpoints publicos
 _B3_IFIX_URL = "https://sistemaswebb3-listados.b3.com.br/indexPage/day/IFIX?language=pt-br"
@@ -57,6 +59,7 @@ _CACHE_TTL_HOURS = 48  # CVM data is monthly, can cache longer
 # ---------------------------------------------------------------------------
 # Cache
 # ---------------------------------------------------------------------------
+
 
 def _init_cache(db_path: str = _CACHE_DB) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
@@ -100,12 +103,14 @@ def _save_cache(conn: sqlite3.Connection, key: str, data_json: str) -> None:
 # CVM — Cadastro de FIIs
 # ---------------------------------------------------------------------------
 
+
 def fetch_cvm_fii_registry(db_path: str = _CACHE_DB) -> list[dict]:
     """
     Busca cadastro oficial de FIIs na CVM.
-    Retorna lista com: CNPJ, nome, ticker, administrador, gestor, tipo.
+    Retorna lista com: CNPJ, nome, tipo, situacao, inicio.
 
-    Fonte: https://dados.cvm.gov.br/dados/FII/CAD/DADOS/
+    Fonte: https://dados.cvm.gov.br/dados/FI/CAD/DADOS/
+    Colunas relevantes: TP_FUNDO, CNPJ_FUNDO, DENOM_SOCIAL, SIT, DT_INI_ATIV
     """
     if not HAS_DEPS:
         return []
@@ -131,21 +136,27 @@ def fetch_cvm_fii_registry(db_path: str = _CACHE_DB) -> list[dict]:
 
         results: list[dict] = []
         for row in reader:
-            # Filter only FIIs with active tickers
+            # Filter only FIIs (unified file contains all fund types)
+            tp_fundo = row.get("TP_FUNDO", "").strip()
+            if "FII" not in tp_fundo.upper():
+                continue
+
+            # Filter only active funds
             sit = row.get("SIT", "").strip()
             if sit != "EM FUNCIONAMENTO NORMAL":
                 continue
 
-            ticker = row.get("CD_CVM_TICKER", row.get("TP_FUNDO", "")).strip()
-            results.append({
-                "cnpj": row.get("CNPJ_FUNDO", "").strip(),
-                "nome": row.get("DENOM_SOCIAL", "").strip(),
-                "administrador": row.get("ADMIN", "").strip(),
-                "gestor": row.get("GESTOR", "").strip(),
-                "tipo": row.get("TP_FUNDO", "").strip(),
-                "situacao": sit,
-                "inicio": row.get("DT_INI_ATIV", "").strip(),
-            })
+            results.append(
+                {
+                    "cnpj": row.get("CNPJ_FUNDO", "").strip(),
+                    "nome": row.get("DENOM_SOCIAL", "").strip(),
+                    "administrador": row.get("ADMIN", "").strip(),
+                    "gestor": row.get("GESTOR", "").strip(),
+                    "tipo": tp_fundo,
+                    "situacao": sit,
+                    "inicio": row.get("DT_INI_ATIV", "").strip(),
+                }
+            )
 
         _save_cache(conn, "cvm_registry", json.dumps(results, ensure_ascii=False))
         logger.info("CVM registry: %d FIIs carregados", len(results))
@@ -161,6 +172,7 @@ def fetch_cvm_fii_registry(db_path: str = _CACHE_DB) -> list[dict]:
 # ---------------------------------------------------------------------------
 # CVM — Proventos mensais
 # ---------------------------------------------------------------------------
+
 
 def fetch_cvm_proventos(
     year: Optional[int] = None,
@@ -234,14 +246,16 @@ def fetch_cvm_proventos(
             if valor_f <= 0:
                 continue
 
-            results.append({
-                "cnpj": row.get("CNPJ_FUNDO", "").strip(),
-                "nome": row.get("DENOM_SOCIAL", row.get("NM_FUNDO_COTA", "")).strip(),
-                "data_referencia": row.get("DT_COMPTC", row.get("DT_REF", "")).strip(),
-                "data_pagamento": row.get("DT_PAGTO", "").strip(),
-                "valor_provento": valor_f,
-                "tipo": row.get("TP_PROVENTO", row.get("TP_EVENTO", "")).strip(),
-            })
+            results.append(
+                {
+                    "cnpj": row.get("CNPJ_FUNDO", "").strip(),
+                    "nome": row.get("DENOM_SOCIAL", row.get("NM_FUNDO_COTA", "")).strip(),
+                    "data_referencia": row.get("DT_COMPTC", row.get("DT_REF", "")).strip(),
+                    "data_pagamento": row.get("DT_PAGTO", "").strip(),
+                    "valor_provento": valor_f,
+                    "tipo": row.get("TP_PROVENTO", row.get("TP_EVENTO", "")).strip(),
+                }
+            )
 
         _save_cache(conn, cache_key, json.dumps(results, ensure_ascii=False))
         logger.info("CVM proventos %d/%02d: %d registros", year, month, len(results))
@@ -257,6 +271,7 @@ def fetch_cvm_proventos(
 # ---------------------------------------------------------------------------
 # B3 — Composicao IFIX
 # ---------------------------------------------------------------------------
+
 
 def fetch_ifix_composition(db_path: str = _CACHE_DB) -> list[dict]:
     """
@@ -296,12 +311,14 @@ def fetch_ifix_composition(db_path: str = _CACHE_DB) -> list[dict]:
             if not ticker:
                 continue
 
-            results.append({
-                "ticker": ticker,
-                "nome": item.get("asset", item.get("name", "")).strip(),
-                "participacao": float(item.get("part", item.get("participation", 0))),
-                "quantidade_teorica": float(item.get("theoricalQty", item.get("qty", 0))),
-            })
+            results.append(
+                {
+                    "ticker": ticker,
+                    "nome": item.get("asset", item.get("name", "")).strip(),
+                    "participacao": float(item.get("part", item.get("participation", 0))),
+                    "quantidade_teorica": float(item.get("theoricalQty", item.get("qty", 0))),
+                }
+            )
 
         if results:
             _save_cache(conn, "b3_ifix", json.dumps(results, ensure_ascii=False))
@@ -319,6 +336,7 @@ def fetch_ifix_composition(db_path: str = _CACHE_DB) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Funcoes de enriquecimento
 # ---------------------------------------------------------------------------
+
 
 def enrich_with_cvm_data(
     ticker: str,

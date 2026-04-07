@@ -1,19 +1,19 @@
 from typing import Union
 
+
 def calculate_income_metrics(
-    proventos: list[dict[str, Union[str, float]]],
-    valor_total_carteira: float
+    proventos: list[dict[str, Union[str, float]]], valor_total_carteira: float
 ) -> dict[str, float]:
     """
     Calcula as métricas reais de renda passiva (dividendos/proventos).
 
     Args:
-        proventos (list[dict[str, Union[str, float]]]): Lista contendo o histórico recente ou mensal 
+        proventos (list[dict[str, Union[str, float]]]): Lista contendo o histórico recente ou mensal
                                                         de proventos recebidos por ticker.
         valor_total_carteira (float): O saldo ou valor de mercado total atual da carteira.
 
     Raises:
-        ValueError: Se o valor da carteira for nulo/negativo, ou se 
+        ValueError: Se o valor da carteira for nulo/negativo, ou se
                     algum provento registrado tiver valor financeiro negativo.
 
     Returns:
@@ -32,15 +32,12 @@ def calculate_income_metrics(
 
         if not isinstance(ticker, str) or not ticker:
             raise ValueError("Provento contém ticker inválido ou ausente.")
-        
+
         if valor < 0:
             raise ValueError(f"Valor de provento negativo encontrado no ativo {ticker}.")
-            
+
         renda_total += float(valor)
 
     yield_percentual = (renda_total / valor_total_carteira) * 100
 
-    return {
-        "renda_total": renda_total,
-        "yield_percentual": yield_percentual
-    }
+    return {"renda_total": renda_total, "yield_percentual": yield_percentual}

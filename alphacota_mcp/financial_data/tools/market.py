@@ -142,15 +142,17 @@ def register_market_tools(mcp: Any) -> None:
             except Exception:
                 price = 0
 
-            results.append({
-                "ticker": t,
-                "name": fii.get("nome", t),
-                "segment": sector_map.get(t, "Outros"),
-                "price": round(price, 2),
-                "dy": round(fund.get("dividend_yield", 0.08) * 100, 2),
-                "pvp": round(fund.get("pvp", 1.0), 2),
-                "score": round(score, 0),
-            })
+            results.append(
+                {
+                    "ticker": t,
+                    "name": fii.get("nome", t),
+                    "segment": sector_map.get(t, "Outros"),
+                    "price": round(price, 2),
+                    "dy": round(fund.get("dividend_yield", 0.08) * 100, 2),
+                    "pvp": round(fund.get("pvp", 1.0), 2),
+                    "score": round(score, 0),
+                }
+            )
 
         results.sort(key=lambda x: x["score"], reverse=True)
         return {"fiis": results, "total": len(results)}

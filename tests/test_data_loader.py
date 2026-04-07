@@ -109,6 +109,7 @@ class TestFetchDividendsWithoutYfinance:
 # fetch_prices — mocked yfinance paths
 # ---------------------------------------------------------------------------
 
+
 def _inject_yf(monkeypatch):
     """Inject a mock yf module into data.data_loader (yfinance may not be installed)."""
     mock_yf = MagicMock()
@@ -154,10 +155,12 @@ class TestFetchPricesWithMockedYfinance:
         monkeypatch.setattr(loader, "DIVIDENDS_DIR", str(tmp_path / "divs"))
         mock_yf = _inject_yf(monkeypatch)
 
-        df = _make_dataframe([
-            {"date": "2024-06-01", "Open": 100, "High": 105, "Low": 99, "Close": 103, "Volume": 5000},
-            {"date": "2024-07-01", "Open": 103, "High": 110, "Low": 101, "Close": 108, "Volume": 6000},
-        ])
+        df = _make_dataframe(
+            [
+                {"date": "2024-06-01", "Open": 100, "High": 105, "Low": 99, "Close": 103, "Volume": 5000},
+                {"date": "2024-07-01", "Open": 103, "High": 110, "Low": 101, "Close": 108, "Volume": 6000},
+            ]
+        )
         mock_yf.download.return_value = df
         result = loader.fetch_prices("HGLG11", "2024-06-01", "2024-07-31")
 
@@ -203,9 +206,11 @@ class TestFetchPricesWithMockedYfinance:
             ["date", "open", "high", "low", "close", "volume"],
         )
 
-        df = _make_dataframe([
-            {"date": "2024-06-01", "Open": 200, "High": 210, "Low": 195, "Close": 205, "Volume": 9000},
-        ])
+        df = _make_dataframe(
+            [
+                {"date": "2024-06-01", "Open": 200, "High": 210, "Low": 195, "Close": 205, "Volume": 9000},
+            ]
+        )
         mock_yf.download.return_value = df
         result = loader.fetch_prices("HGLG11", "2024-06-01", "2024-06-30", force_refresh=True)
         mock_yf.download.assert_called_once()
@@ -217,9 +222,11 @@ class TestFetchPricesWithMockedYfinance:
         monkeypatch.setattr(loader, "DIVIDENDS_DIR", str(tmp_path / "d"))
         mock_yf = _inject_yf(monkeypatch)
 
-        df = _make_dataframe([
-            {"date": "2024-06-01", "Open": 10, "High": 11, "Low": 9, "Close": 10, "Volume": 100},
-        ])
+        df = _make_dataframe(
+            [
+                {"date": "2024-06-01", "Open": 10, "High": 11, "Low": 9, "Close": 10, "Volume": 100},
+            ]
+        )
         mock_yf.download.return_value = df
         loader.fetch_prices("MXRF11", "2024-06-01", "2024-06-30")
         call_args = mock_yf.download.call_args
@@ -231,9 +238,11 @@ class TestFetchPricesWithMockedYfinance:
         monkeypatch.setattr(loader, "DIVIDENDS_DIR", str(tmp_path / "d"))
         mock_yf = _inject_yf(monkeypatch)
 
-        df = _make_dataframe([
-            {"date": "2024-06-01", "Open": 3000, "High": 3050, "Low": 2980, "Close": 3020, "Volume": 0},
-        ])
+        df = _make_dataframe(
+            [
+                {"date": "2024-06-01", "Open": 3000, "High": 3050, "Low": 2980, "Close": 3020, "Volume": 0},
+            ]
+        )
         mock_yf.download.return_value = df
         loader.fetch_prices("^IFIX", "2024-06-01", "2024-06-30")
         call_args = mock_yf.download.call_args
@@ -286,9 +295,11 @@ class TestFetchPricesWithMockedYfinance:
             ["date", "open", "high", "low", "close", "volume"],
         )
 
-        df = _make_dataframe([
-            {"date": "2024-06-01", "Open": 150, "High": 155, "Low": 148, "Close": 152, "Volume": 3000},
-        ])
+        df = _make_dataframe(
+            [
+                {"date": "2024-06-01", "Open": 150, "High": 155, "Low": 148, "Close": 152, "Volume": 3000},
+            ]
+        )
         mock_yf.download.return_value = df
         result = loader.fetch_prices("HGLG11", "2024-06-01", "2024-06-30")
         mock_yf.download.assert_called_once()
@@ -298,6 +309,7 @@ class TestFetchPricesWithMockedYfinance:
 # ---------------------------------------------------------------------------
 # fetch_dividends — mocked yfinance paths
 # ---------------------------------------------------------------------------
+
 
 class TestFetchDividendsWithMockedYfinance:
     """Tests for fetch_dividends with mocked yfinance.Ticker."""
@@ -309,10 +321,12 @@ class TestFetchDividendsWithMockedYfinance:
         monkeypatch.setattr(loader, "DIVIDENDS_DIR", divs_dir)
         mock_yf = _inject_yf(monkeypatch)
 
-        series = _make_dividends_series([
-            ("2024-06-15", 0.10),
-            ("2024-07-15", 0.12),
-        ])
+        series = _make_dividends_series(
+            [
+                ("2024-06-15", 0.10),
+                ("2024-07-15", 0.12),
+            ]
+        )
         mock_ticker = MagicMock()
         type(mock_ticker).dividends = PropertyMock(return_value=series)
         mock_yf.Ticker.return_value = mock_ticker
@@ -410,12 +424,14 @@ class TestFetchDividendsWithMockedYfinance:
         monkeypatch.setattr(loader, "DIVIDENDS_DIR", str(tmp_path / "d"))
         mock_yf = _inject_yf(monkeypatch)
 
-        series = _make_dividends_series([
-            ("2024-05-15", 0.08),
-            ("2024-06-15", 0.10),
-            ("2024-07-15", 0.12),
-            ("2024-08-15", 0.09),
-        ])
+        series = _make_dividends_series(
+            [
+                ("2024-05-15", 0.08),
+                ("2024-06-15", 0.10),
+                ("2024-07-15", 0.12),
+                ("2024-08-15", 0.09),
+            ]
+        )
         mock_ticker = MagicMock()
         type(mock_ticker).dividends = PropertyMock(return_value=series)
         mock_yf.Ticker.return_value = mock_ticker

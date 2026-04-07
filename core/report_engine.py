@@ -26,8 +26,7 @@ def portfolio_to_csv(portfolio: list[dict]) -> str:
         str: Conteúdo do CSV em texto.
     """
     output = io.StringIO()
-    fieldnames = ["ticker", "quantidade", "preco_atual", "dividend_mensal",
-                  "valor_total", "dy_anual_%"]
+    fieldnames = ["ticker", "quantidade", "preco_atual", "dividend_mensal", "valor_total", "dy_anual_%"]
 
     writer = csv.DictWriter(output, fieldnames=fieldnames)
     writer.writeheader()
@@ -35,20 +34,22 @@ def portfolio_to_csv(portfolio: list[dict]) -> str:
     total_valor = sum(p["quantidade"] * p.get("preco_atual", 0) for p in portfolio)
 
     for p in portfolio:
-        qty   = p.get("quantidade", 0)
+        qty = p.get("quantidade", 0)
         price = p.get("preco_atual", 0.0)
-        div   = p.get("dividend_mensal", 0.0)
+        div = p.get("dividend_mensal", 0.0)
         valor = qty * price
-        dy    = (div * 12 / price * 100) if price > 0 else 0.0
+        dy = (div * 12 / price * 100) if price > 0 else 0.0
 
-        writer.writerow({
-            "ticker":          p.get("ticker", "?"),
-            "quantidade":      qty,
-            "preco_atual":     f"{price:.2f}",
-            "dividend_mensal": f"{div:.4f}",
-            "valor_total":     f"{valor:.2f}",
-            "dy_anual_%":      f"{dy:.2f}",
-        })
+        writer.writerow(
+            {
+                "ticker": p.get("ticker", "?"),
+                "quantidade": qty,
+                "preco_atual": f"{price:.2f}",
+                "dividend_mensal": f"{div:.4f}",
+                "valor_total": f"{valor:.2f}",
+                "dy_anual_%": f"{dy:.2f}",
+            }
+        )
 
     return output.getvalue()
 
@@ -96,17 +97,17 @@ def generate_html_tearsheet(
     """
     now = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
     total_valor = sum(p.get("quantidade", 0) * p.get("preco_atual", 0) for p in portfolio)
-    total_dy    = sum(p.get("dividend_mensal", 0) for p in portfolio)
+    total_dy = sum(p.get("dividend_mensal", 0) for p in portfolio)
 
     # --- Carteira ---
     portfolio_rows = ""
     for p in portfolio:
-        qty   = p.get("quantidade", 0)
+        qty = p.get("quantidade", 0)
         price = p.get("preco_atual", 0.0)
-        div   = p.get("dividend_mensal", 0.0)
+        div = p.get("dividend_mensal", 0.0)
         valor = qty * price
-        dy    = (div * 12 / price * 100) if price > 0 else 0.0
-        pct   = (valor / total_valor * 100) if total_valor > 0 else 0.0
+        dy = (div * 12 / price * 100) if price > 0 else 0.0
+        pct = (valor / total_valor * 100) if total_valor > 0 else 0.0
         portfolio_rows += f"""
         <tr>
           <td><b>{p.get('ticker','?')}</b></td>
@@ -123,8 +124,11 @@ def generate_html_tearsheet(
     if backtest_metrics:
         bk_rows = ""
         labels = {
-            "cagr": "CAGR", "sharpe": "Sharpe Ratio", "sortino": "Sortino",
-            "max_drawdown": "Max Drawdown", "annual_volatility": "Volatilidade Anual",
+            "cagr": "CAGR",
+            "sharpe": "Sharpe Ratio",
+            "sortino": "Sortino",
+            "max_drawdown": "Max Drawdown",
+            "annual_volatility": "Volatilidade Anual",
             "total_return": "Retorno Total",
         }
         for k, label in labels.items():

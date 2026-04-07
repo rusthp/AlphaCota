@@ -81,8 +81,13 @@ class TestGenerateHtmlTearsheet:
         assert "Correlação" in html
 
     def test_with_stress_summary(self):
-        stress = {"worst_scenario": "Crise", "worst_drawdown": -0.25, "avg_drawdown": -0.15,
-                  "avg_div_cut": -0.10, "n_scenarios": 5}
+        stress = {
+            "worst_scenario": "Crise",
+            "worst_drawdown": -0.25,
+            "avg_drawdown": -0.15,
+            "avg_div_cut": -0.10,
+            "n_scenarios": 5,
+        }
         html = generate_html_tearsheet(_portfolio(), stress_summary=stress)
         assert "Stress" in html
         assert "Crise" in html

@@ -6,6 +6,7 @@ Testes unitários para core/stress_engine.py.
 
 import sys
 import os
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from core.stress_engine import (
@@ -39,9 +40,9 @@ def run_test(name: str, fn) -> bool:
 
 # --- Dados comuns ---
 PORTFOLIO = [
-    {"ticker": "MXRF11", "quantidade": 200, "preco_atual": 10.0,  "dividend_mensal": 0.09},
-    {"ticker": "HGLG11", "quantidade": 10,  "preco_atual": 155.0, "dividend_mensal": 1.10},
-    {"ticker": "XPML11", "quantidade": 50,  "preco_atual": 90.0,  "dividend_mensal": 0.65},
+    {"ticker": "MXRF11", "quantidade": 200, "preco_atual": 10.0, "dividend_mensal": 0.09},
+    {"ticker": "HGLG11", "quantidade": 10, "preco_atual": 155.0, "dividend_mensal": 1.10},
+    {"ticker": "XPML11", "quantidade": 50, "preco_atual": 90.0, "dividend_mensal": 0.65},
 ]
 
 SECTOR_MAP = {
@@ -54,6 +55,7 @@ SECTOR_MAP = {
 # ---------------------------------------------------------------------------
 # STRESS_SCENARIOS (estrutura)
 # ---------------------------------------------------------------------------
+
 
 def test_scenarios_defined():
     """Deve haver ao menos 5 cenários definidos."""
@@ -70,6 +72,7 @@ def test_scenarios_have_required_fields():
 # ---------------------------------------------------------------------------
 # apply_price_shock
 # ---------------------------------------------------------------------------
+
 
 def test_price_shock_negative():
     """Choque negativo deve reduzir o preço."""
@@ -103,6 +106,7 @@ def test_price_shock_unknown_sector():
 # apply_dividend_shock
 # ---------------------------------------------------------------------------
 
+
 def test_dividend_shock_cut():
     """Corte de 30% nos dividendos."""
     shock_map = {"Papel (CRI)": -0.30, "Outros": -0.30}
@@ -121,11 +125,19 @@ def test_dividend_shock_never_negative():
 # apply_stress_scenario
 # ---------------------------------------------------------------------------
 
+
 def test_stress_result_keys():
     """Resultado deve conter todas as chaves esperadas."""
     result = apply_stress_scenario(PORTFOLIO, "alta_juros_moderada", SECTOR_MAP)
-    for key in ("scenario_name", "total_antes", "total_depois", "drawdown",
-                "dividendos_antes", "dividendos_depois", "assets"):
+    for key in (
+        "scenario_name",
+        "total_antes",
+        "total_depois",
+        "drawdown",
+        "dividendos_antes",
+        "dividendos_depois",
+        "assets",
+    ):
         assert key in result, f"Chave '{key}' ausente"
 
 
@@ -145,12 +157,12 @@ def test_stress_queda_mercado_drawdown_negative():
 def test_stress_alta_juros_papel_melhor():
     """No cenário de alta de juros, CRI deve ter impacto menos negativo que Shopping."""
     result = apply_stress_scenario(PORTFOLIO, "alta_juros_severa", SECTOR_MAP)
-    cri   = next(a for a in result["assets"] if a["ticker"] == "MXRF11")
-    shop  = next(a for a in result["assets"] if a["ticker"] == "XPML11")
+    cri = next(a for a in result["assets"] if a["ticker"] == "MXRF11")
+    shop = next(a for a in result["assets"] if a["ticker"] == "XPML11")
     # CRI tem preço positivo (benefício) ou menor queda que Shopping
-    assert cri["impacto_%"] > shop["impacto_%"], (
-        f"CRI deveria ser > Shopping em alta de juros: {cri['impacto_%']} vs {shop['impacto_%']}"
-    )
+    assert (
+        cri["impacto_%"] > shop["impacto_%"]
+    ), f"CRI deveria ser > Shopping em alta de juros: {cri['impacto_%']} vs {shop['impacto_%']}"
 
 
 def test_stress_corte_dividendos():
@@ -178,6 +190,7 @@ def test_stress_invalid_scenario():
 # run_stress_suite
 # ---------------------------------------------------------------------------
 
+
 def test_suite_all_scenarios():
     """Suite sem filtro deve rodar todos os cenários disponíveis."""
     results = run_stress_suite(PORTFOLIO, SECTOR_MAP)
@@ -193,14 +206,14 @@ def test_suite_sorted_ascending():
 
 def test_suite_filtered():
     """Suite com filtro deve rodar apenas os cenários indicados."""
-    results = run_stress_suite(PORTFOLIO, SECTOR_MAP,
-                               scenario_keys=["queda_mercado_20", "corte_dividendos_30"])
+    results = run_stress_suite(PORTFOLIO, SECTOR_MAP, scenario_keys=["queda_mercado_20", "corte_dividendos_30"])
     assert len(results) == 2
 
 
 # ---------------------------------------------------------------------------
 # summarize_stress_suite
 # ---------------------------------------------------------------------------
+
 
 def test_summary_keys():
     """Sumário deve ter as chaves esperadas."""
@@ -227,6 +240,7 @@ def test_format_report_str():
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
+
 
 def main() -> bool:
     tests = [
@@ -270,4 +284,5 @@ def main() -> bool:
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(0 if main() else 1)

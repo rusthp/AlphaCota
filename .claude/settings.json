@@ -23,7 +23,21 @@
       "Bash(tasklist)",
       "Bash(taskkill //PID 6888 //F)",
       "Bash(sc query:*)",
-      "Bash(net stop:*)"
+      "Bash(net stop:*)",
+      "Bash(python scripts/index_vectorizer.py --dry-run)",
+      "Bash(python -c \":*)",
+      "Bash(python scripts/index_vectorizer.py)",
+      "mcp__vectorizer__search_hybrid",
+      "Bash(python -m pytest --cov=. --cov-report=term-missing -q --tb=no)",
+      "Bash(sort -t'%' -k1 -n)",
+      "Bash(python -m pytest tests/test_alphacota_mcp.py -v --tb=short)",
+      "Bash(pytest tests/test_alphacota_mcp.py -v --tb=short)",
+      "Bash(python -m pytest --cov=alphacota_mcp --cov-report=term-missing -q --tb=no)",
+      "Bash(python -m pytest --cov=alphacota_mcp --cov-report=term-missing --tb=no -q)",
+      "Bash(python -m pytest tests/test_alphacota_mcp.py --cov=alphacota_mcp --cov-report=term-missing --tb=no -q)",
+      "Bash(python -m pytest tests/test_cli.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_cli.py --cov=cli --cov-report=term-missing -q --tb=no)",
+      "Bash(python -m pytest tests/test_alphacota_cli.py tests/test_cli.py --cov=cli --cov-report=term-missing -q --tb=short)"
     ]
   }
 }

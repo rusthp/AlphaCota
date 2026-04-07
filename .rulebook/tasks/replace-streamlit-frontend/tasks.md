@@ -41,5 +41,5 @@
 
 ## 4. Migration Phase
 - [x] 4.1 Feature parity verification against Streamlit dashboard
-- [ ] 4.2 Deprecate `frontend/dashboard.py`
-- [ ] 4.3 Update documentation and README
+- [x] 4.2 Deprecate `frontend/dashboard.py` (added DEPRECATED header)
+- [x] 4.3 Update documentation and README (MCP, React, new architecture)

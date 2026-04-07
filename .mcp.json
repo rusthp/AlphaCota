@@ -1,4 +1,4 @@
-{
+﻿{
   "mcpServers": {
     "rulebook": {
       "command": "npx",
@@ -7,6 +7,13 @@
         "@hivehub/rulebook@latest",
         "mcp-server"
       ]
+    },
+    "vectorizer": {
+      "type": "http",
+      "url": "http://localhost:15002/mcp",
+      "headers": {
+        "x-api-key": "kwdt6ZoqRvgyp3J3tVImhSpytGNSnYtt"
+      }
     }
   }
 }

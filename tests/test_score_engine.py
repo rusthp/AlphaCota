@@ -104,6 +104,16 @@ class TestCalculateRiskScore:
         score = calculate_risk_score(float("nan"), 0.05)
         assert 0.0 <= score <= 10.0
 
+    def test_nan_vacancy_uses_default(self):
+        """nan vacancy_rate triggers the warning branch (lines 129-130)."""
+        score = calculate_risk_score(0.3, float("nan"))
+        assert 0.0 <= score <= 10.0
+
+    def test_inf_vacancy_uses_default(self):
+        """inf vacancy_rate also triggers the nan/inf guard (lines 129-130)."""
+        score = calculate_risk_score(0.2, float("inf"))
+        assert 0.0 <= score <= 10.0
+
 
 class TestCalculateGrowthScore:
     def test_high_growth(self):
@@ -118,13 +128,32 @@ class TestCalculateGrowthScore:
         score = calculate_growth_score(-0.10, -0.05)
         assert score == pytest.approx(0.0)
 
+    def test_nan_revenue_growth_treated_as_zero(self):
+        """nan revenue_growth_12m triggers the guard (line 154)."""
+        score = calculate_growth_score(float("nan"), 0.10)
+        assert 0.0 <= score <= 10.0
+
+    def test_nan_earnings_growth_treated_as_zero(self):
+        """nan earnings_growth_12m triggers the guard (line 156)."""
+        score = calculate_growth_score(0.10, float("nan"))
+        assert 0.0 <= score <= 10.0
+
+    def test_inf_revenue_growth_treated_as_zero(self):
+        """inf revenue_growth_12m is reset to 0.0 by the guard (line 153-154)."""
+        score = calculate_growth_score(float("inf"), 0.0)
+        assert score == pytest.approx(0.0)  # inf replaced with 0.0, earnings also 0.0
+
 
 class TestCalculateAlphaScore:
     def test_returns_all_keys(self):
         result = calculate_alpha_score(
-            dividend_yield=0.10, dividend_consistency=8.0,
-            pvp=0.9, debt_ratio=0.2, vacancy_rate=0.05,
-            revenue_growth_12m=0.10, earnings_growth_12m=0.12,
+            dividend_yield=0.10,
+            dividend_consistency=8.0,
+            pvp=0.9,
+            debt_ratio=0.2,
+            vacancy_rate=0.05,
+            revenue_growth_12m=0.10,
+            earnings_growth_12m=0.12,
         )
         assert "alpha_score" in result
         assert "income_score" in result
@@ -160,10 +189,24 @@ class TestCalculateAlphaScore:
 class TestRankFiis:
     def test_sorted_by_score_desc(self):
         fiis = [
-            {"ticker": "BAD11", "dividend_yield": 0.04, "pvp": 1.5, "debt_ratio": 1.0,
-             "vacancy_rate": 0.3, "revenue_growth_12m": 0.0, "earnings_growth_12m": 0.0},
-            {"ticker": "GOOD11", "dividend_yield": 0.12, "pvp": 0.7, "debt_ratio": 0.0,
-             "vacancy_rate": 0.0, "revenue_growth_12m": 0.20, "earnings_growth_12m": 0.20},
+            {
+                "ticker": "BAD11",
+                "dividend_yield": 0.04,
+                "pvp": 1.5,
+                "debt_ratio": 1.0,
+                "vacancy_rate": 0.3,
+                "revenue_growth_12m": 0.0,
+                "earnings_growth_12m": 0.0,
+            },
+            {
+                "ticker": "GOOD11",
+                "dividend_yield": 0.12,
+                "pvp": 0.7,
+                "debt_ratio": 0.0,
+                "vacancy_rate": 0.0,
+                "revenue_growth_12m": 0.20,
+                "earnings_growth_12m": 0.20,
+            },
         ]
         ranked = rank_fiis(fiis)
         assert ranked[0]["ticker"] == "GOOD11"

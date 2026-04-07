@@ -1,4 +1,4 @@
-import { Radar, LineChart, Briefcase, Sparkles, ArrowLeft, Globe, TrendingUp, Shield, GitBranch, Layers } from "lucide-react";
+import { Radar, LineChart, Briefcase, Sparkles, ArrowLeft, Globe, TrendingUp, Shield, GitBranch, Layers, CalendarDays, BarChart3, Bookmark } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation, Link } from "react-router-dom";
 import {
@@ -23,6 +23,9 @@ const items = [
   { title: "Correlação", url: "/dashboard/correlation", icon: GitBranch },
   { title: "Clusters", url: "/dashboard/clusters", icon: Layers },
   { title: "AI Insights", url: "/dashboard/ai-insights", icon: Sparkles },
+  { title: "Calendário", url: "/dashboard/calendar", icon: CalendarDays },
+  { title: "Comparador", url: "/dashboard/compare", icon: BarChart3 },
+  { title: "Watchlist", url: "/dashboard/watchlist", icon: Bookmark },
 ];
 
 export function DashboardSidebar() {
@@ -36,9 +39,7 @@ export function DashboardSidebar() {
       <SidebarContent>
         {/* Logo */}
         <div className={`flex items-center gap-2 px-4 py-4 ${collapsed ? "justify-center" : ""}`}>
-          <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center flex-shrink-0">
-            <span className="font-bold text-primary text-sm">α</span>
-          </div>
+          <img src="/logo.png" alt="AlphaCota" className="w-8 h-8 object-contain flex-shrink-0" />
           {!collapsed && <span className="font-bold text-lg tracking-tight">AlphaCota</span>}
         </div>
 

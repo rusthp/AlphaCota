@@ -13,10 +13,10 @@ import datetime
 import os
 import csv
 
-
 # Importação defensiva do python-bcb
 try:
     from bcb import sgs
+
     HAS_BCB = True
 except ImportError:
     HAS_BCB = False
@@ -28,22 +28,23 @@ _MACRO_DIR = os.path.join(_BASE_DIR, "data", "macro")
 
 
 # Códigos SGS (Sistema de Gerenciamento de Séries — Banco Central)
-SGS_SELIC_DAILY  = 11   # Taxa Selic (Over) — diária
-SGS_CDI_DAILY    = 12   # Taxa CDI — diária
+SGS_SELIC_DAILY = 11  # Taxa Selic (Over) — diária
+SGS_CDI_DAILY = 12  # Taxa CDI — diária
 SGS_IPCA_MONTHLY = 433  # IPCA mensal variação %
 
 
 # Valores fallback (médias históricas recentes)
 _FALLBACK = {
-    "selic_anual":  10.75,  # % ao ano
-    "cdi_anual":    10.65,  # % ao ano
-    "ipca_anual":    4.83,  # % ao ano acumulado 12m
+    "selic_anual": 10.75,  # % ao ano
+    "cdi_anual": 10.65,  # % ao ano
+    "ipca_anual": 4.83,  # % ao ano acumulado 12m
 }
 
 
 # ---------------------------------------------------------------------------
 # Cache local CSV
 # ---------------------------------------------------------------------------
+
 
 def _cache_path(name: str) -> str:
     os.makedirs(_MACRO_DIR, exist_ok=True)
@@ -69,6 +70,7 @@ def _save_macro_csv(name: str, rows: list[dict], fieldnames: list[str]) -> None:
 # ---------------------------------------------------------------------------
 # Fetch via BCB API
 # ---------------------------------------------------------------------------
+
 
 def _fetch_sgs_monthly(
     code: int,
@@ -96,10 +98,7 @@ def _fetch_sgs_monthly(
         df = sgs.get({name: code}, start=start_date, end=end_date)
         if df is None or df.empty:
             return []
-        rows = [
-            {"date": str(idx)[:10], "value": round(float(val), 6)}
-            for idx, val in df.iloc[:, 0].items()
-        ]
+        rows = [{"date": str(idx)[:10], "value": round(float(val), 6)} for idx, val in df.iloc[:, 0].items()]
         _save_macro_csv(name, rows, ["date", "value"])
         return [r for r in rows if start_date <= r["date"] <= end_date]
     except Exception:
@@ -109,6 +108,7 @@ def _fetch_sgs_monthly(
 # ---------------------------------------------------------------------------
 # API pública — dados anualizados
 # ---------------------------------------------------------------------------
+
 
 def get_selic_history(
     start_date: str | None = None,
@@ -128,7 +128,7 @@ def get_selic_history(
     """
     today = datetime.date.today()
     start_date = start_date or (today.replace(year=today.year - 3)).isoformat()
-    end_date   = end_date   or today.isoformat()
+    end_date = end_date or today.isoformat()
 
     rows = _fetch_sgs_monthly(SGS_SELIC_DAILY, "selic", start_date, end_date, force_refresh)
     if rows:
@@ -149,7 +149,7 @@ def get_cdi_history(
     """
     today = datetime.date.today()
     start_date = start_date or (today.replace(year=today.year - 3)).isoformat()
-    end_date   = end_date   or today.isoformat()
+    end_date = end_date or today.isoformat()
 
     rows = _fetch_sgs_monthly(SGS_CDI_DAILY, "cdi", start_date, end_date, force_refresh)
     if rows:
@@ -170,7 +170,7 @@ def get_ipca_history(
     """
     today = datetime.date.today()
     start_date = start_date or (today.replace(year=today.year - 3)).isoformat()
-    end_date   = end_date   or today.isoformat()
+    end_date = end_date or today.isoformat()
 
     rows = _fetch_sgs_monthly(SGS_IPCA_MONTHLY, "ipca", start_date, end_date, force_refresh)
     if rows:
@@ -191,17 +191,15 @@ def get_current_risk_free_rate(force_refresh: bool = False) -> tuple[float, str]
     """
     today = datetime.date.today()
     start = (today.replace(year=today.year - 1)).isoformat()
-    end   = today.isoformat()
+    end = today.isoformat()
 
     rows, source = get_selic_history(start, end, force_refresh)
     if rows:
-        # A série SGS 11 é em % ao dia → acumular
+        # SGS 11 retorna taxa Selic diária em % ao dia (ex: 0.0567)
         values = [float(r["value"]) / 100 for r in rows]
-        # Aproximar taxa anual: (1 + taxa_diaria)^252 - 1
-        # Mas como a série vem diária de forma acumulada mensalmente,
-        # usa média simples e anualiza × 12 como aproximação razoável
-        avg_monthly = sum(values) / len(values)
-        anual = (1 + avg_monthly) ** 12 - 1
+        avg_daily = sum(values) / len(values)
+        # Anualizar pela convenção de 252 dias úteis
+        anual = (1 + avg_daily) ** 252 - 1
         return round(anual, 4), "bcb"
 
     return _FALLBACK["selic_anual"] / 100, "fallback"
@@ -230,13 +228,13 @@ def get_macro_snapshot() -> dict:
     cdi_anual = round(selic * 0.99, 4)  # CDI ≈ Selic × 0.99
 
     return {
-        "selic_anual":    round(selic * 100, 2),      # em %
-        "cdi_anual":      round(cdi_anual * 100, 2),  # em %
-        "ipca_anual":     round(ipca_anual * 100, 2), # em %
-        "premio_risco":   round((selic - ipca_anual) * 100, 2),
-        "fonte_selic":    src_selic,
-        "fonte_ipca":     src_ipca,
-        "data_ref":       today.isoformat(),
+        "selic_anual": round(selic * 100, 2),  # em %
+        "cdi_anual": round(cdi_anual * 100, 2),  # em %
+        "ipca_anual": round(ipca_anual * 100, 2),  # em %
+        "premio_risco": round((selic - ipca_anual) * 100, 2),
+        "fonte_selic": src_selic,
+        "fonte_ipca": src_ipca,
+        "data_ref": today.isoformat(),
     }
 
 
@@ -257,7 +255,7 @@ def calcular_premio_risco_fii(
     if macro is None:
         macro = get_macro_snapshot()
 
-    spread_cdi  = round(dividend_yield_anual - macro["cdi_anual"], 2)
+    spread_cdi = round(dividend_yield_anual - macro["cdi_anual"], 2)
     spread_ipca = round(dividend_yield_anual - macro["ipca_anual"], 2)
 
     if spread_cdi >= 4:
@@ -270,10 +268,10 @@ def calcular_premio_risco_fii(
         rating = "🔴 Negativo — abaixo do CDI"
 
     return {
-        "dy_anual_%":     dividend_yield_anual,
-        "cdi_anual_%":    macro["cdi_anual"],
-        "ipca_anual_%":   macro["ipca_anual"],
-        "spread_cdi_%":   spread_cdi,
-        "spread_ipca_%":  spread_ipca,
-        "rating":         rating,
+        "dy_anual_%": dividend_yield_anual,
+        "cdi_anual_%": macro["cdi_anual"],
+        "ipca_anual_%": macro["ipca_anual"],
+        "spread_cdi_%": spread_cdi,
+        "spread_ipca_%": spread_ipca,
+        "rating": rating,
     }

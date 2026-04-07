@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": "../../.."
+		},
+		{
+			"path": "C:/Users/ally/Documents/vectorizer"
+		}
+	],
+	"settings": {
+		"powershell.cwd": "alphacota"
+	}
+}

@@ -18,8 +18,12 @@ import {
   fetchSimulate,
   fetchMonteCarlo,
   fetchAIAnalysis,
+  fetchAIBatchAnalysis,
   fetchNews,
   fetchHealth,
+  fetchScoreHistory,
+  fetchSentimentTrend,
+  fetchScoreAlerts,
 } from "@/services/api";
 
 const STALE_5MIN = 5 * 60 * 1000;
@@ -101,8 +105,13 @@ export function useCorrelation() {
 /** Stress test */
 export function useStressTest() {
   return useMutation({
-    mutationFn: (params: { tickers: string[]; quantities?: Record<string, number>; scenarios?: string[] }) =>
-      fetchStressTest(params.tickers, params.quantities, params.scenarios),
+    mutationFn: (params: { 
+      tickers: string[]; 
+      quantities?: Record<string, number>; 
+      scenarios?: string[];
+      custom_scenario?: { name: string; price_shock: Record<string, number>; dividend_shock: Record<string, number> };
+    }) =>
+      fetchStressTest(params.tickers, params.quantities, params.scenarios, params.custom_scenario),
   });
 }
 
@@ -132,5 +141,40 @@ export function useAIAnalysis() {
   return useMutation({
     mutationFn: (params: { ticker: string; apiKey?: string }) =>
       fetchAIAnalysis(params.ticker, params.apiKey),
+  });
+}
+
+/** AI Batch Analysis */
+export function useAIBatchAnalysis() {
+  return useMutation({
+    mutationFn: (params: { tickers: string[]; apiKey?: string }) =>
+      fetchAIBatchAnalysis(params.tickers, params.apiKey),
+  });
+}
+
+/** Score History */
+export function useScoreHistory(ticker: string, limit: number = 12) {
+  return useQuery({
+    queryKey: ["scoreHistory", ticker, limit],
+    queryFn: () => fetchScoreHistory(ticker, limit),
+    enabled: !!ticker,
+  });
+}
+
+/** Sentiment Trend */
+export function useSentimentTrend(ticker: string, limit: number = 5) {
+  return useQuery({
+    queryKey: ["sentimentTrend", ticker, limit],
+    queryFn: () => fetchSentimentTrend(ticker, limit),
+    enabled: !!ticker,
+  });
+}
+
+/** Score Alerts */
+export function useScoreAlerts(tickers: string[], threshold: number = 10.0) {
+  return useQuery({
+    queryKey: ["scoreAlerts", tickers.join(","), threshold],
+    queryFn: () => fetchScoreAlerts(tickers, threshold),
+    enabled: tickers.length > 0,
   });
 }

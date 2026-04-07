@@ -14,11 +14,13 @@ import datetime
 import json
 import random
 import time
+from pathlib import Path
 from typing import Optional
 
 from bs4 import BeautifulSoup
 
 from core.logger import get_logger
+
 logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -27,12 +29,14 @@ logger = get_logger(__name__)
 
 try:
     import requests
+
     _HAS_REQUESTS = True
 except ImportError:
     _HAS_REQUESTS = False
 
 try:
     from bs4 import BeautifulSoup
+
     _HAS_BS4 = True
 except ImportError:
     _HAS_BS4 = False
@@ -55,24 +59,25 @@ _USER_AGENT = (
 _CACHE_DB = "alphacota_fundamentals.db"
 _CACHE_TTL_HOURS = 24
 
-# Valores padrão conservadores para fallback total
-_DEFAULT_FUNDAMENTALS: dict[str, float] = {
+# Valores padrão para fallback total — None indica "sem dados reais disponíveis"
+_DEFAULT_FUNDAMENTALS: dict = {
     "dividend_yield": 0.08,
-    "dividend_consistency": 7.0,
+    "dividend_consistency": None,  # calculado via histórico CSV; None se indisponível
     "pvp": 1.0,
-    "debt_ratio": 0.3,
-    "vacancy_rate": 0.05,
+    "debt_ratio": None,  # hardcoded 0.3 foi removido — None = sem dado real
+    "vacancy_rate": None,  # hardcoded 0.05 foi removido — None = sem dado real
     "revenue_growth_12m": 0.0,
     "earnings_growth_12m": 0.0,
     "daily_liquidity": 500_000.0,
     "net_asset_value": 0.0,
-    "last_dividend": 0.0,
+    "last_dividend": None,  # 0.0 hardcoded foi removido
 }
 
 
 # ---------------------------------------------------------------------------
 # Cache SQLite
 # ---------------------------------------------------------------------------
+
 
 def _init_cache_db(db_path: str = _CACHE_DB) -> sqlite3.Connection:
     """Inicializa o banco de cache de fundamentalistas."""
@@ -170,8 +175,99 @@ def _get_stale_cache(conn: sqlite3.Connection, ticker: str) -> Optional[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Enriquecimento com histórico local de dividendos
+# ---------------------------------------------------------------------------
+
+_HISTORICAL_DIVIDENDS_DIR = Path(__file__).parent / "historical_dividends"
+
+
+def _enrich_with_history(result: dict, ticker: str) -> dict:
+    """
+    Enriquece o resultado do scraper com métricas calculadas a partir do
+    histórico local de dividendos (CSV em data/historical_dividends/).
+
+    Campos enriquecidos:
+    - dividend_consistency: fração de meses com dividendo > 0 nos últimos 24 meses (0.0–1.0).
+    - revenue_growth_12m: crescimento do dividendo médio (últimos 6 meses vs meses 7–18).
+    - earnings_growth_12m: idêntico a revenue_growth_12m (proxy para FIIs).
+
+    Args:
+        result: Dicionário de indicadores já preenchido pelo scraper.
+        ticker: Código do FII sem '.SA' (ex: 'MXRF11').
+
+    Returns:
+        dict atualizado com os campos enriquecidos.
+    """
+    try:
+        import pandas as pd
+
+        csv_path = _HISTORICAL_DIVIDENDS_DIR / f"{ticker}_dividends.csv"
+        df = pd.read_csv(csv_path, parse_dates=["date"])
+
+        if df.empty or "dividend" not in df.columns or "date" not in df.columns:
+            result["dividend_consistency"] = None
+            result["revenue_growth_12m"] = 0.0
+            result["earnings_growth_12m"] = 0.0
+            return result
+
+        df = df.sort_values("date").reset_index(drop=True)
+
+        now = pd.Timestamp.now()
+        cutoff_24m = now - pd.DateOffset(months=24)
+
+        # --- dividend_consistency: months with non-zero dividend in last 24 months ---
+        df_24m = df[df["date"] >= cutoff_24m].copy()
+        if df_24m.empty:
+            result["dividend_consistency"] = None
+        else:
+            non_zero = (df_24m["dividend"] > 0).sum()
+            result["dividend_consistency"] = round(non_zero / 24, 4)
+
+        # --- revenue_growth_12m / earnings_growth_12m ---
+        cutoff_6m = now - pd.DateOffset(months=6)
+        cutoff_18m = now - pd.DateOffset(months=18)
+
+        recent = df[(df["date"] >= cutoff_6m) & (df["date"] < now)]["dividend"]
+        older = df[(df["date"] >= cutoff_18m) & (df["date"] < cutoff_6m)]["dividend"]
+
+        if len(recent) < 1 or len(older) < 1:
+            result["revenue_growth_12m"] = 0.0
+            result["earnings_growth_12m"] = 0.0
+            return result
+
+        avg_recent = recent.mean()
+        avg_older = older.mean()
+
+        if avg_older == 0:
+            growth = 0.0
+        else:
+            growth = (avg_recent - avg_older) / avg_older
+
+        # Clamp to -1.0 .. +1.0
+        growth = max(-1.0, min(1.0, growth))
+        growth = round(growth, 4)
+
+        result["revenue_growth_12m"] = growth
+        result["earnings_growth_12m"] = growth
+
+    except FileNotFoundError:
+        logger.debug(f"Histórico de dividendos não encontrado para {ticker}")
+        result["dividend_consistency"] = None
+        result["revenue_growth_12m"] = 0.0
+        result["earnings_growth_12m"] = 0.0
+    except Exception as e:
+        logger.warning(f"Erro ao enriquecer histórico de {ticker}: {e}")
+        result["dividend_consistency"] = None
+        result["revenue_growth_12m"] = 0.0
+        result["earnings_growth_12m"] = 0.0
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Scraping do Status Invest
 # ---------------------------------------------------------------------------
+
 
 def _parse_indicator(text: str) -> float:
     """
@@ -267,19 +363,20 @@ def _scrape_status_invest(ticker: str) -> Optional[dict]:
 
         result = {
             "ticker": ticker_clean,
-            "dividend_yield": round(dy_raw / 100, 4) if dy_raw > 1 else dy_raw,
-            "dividend_consistency": 7.0,  # Status Invest não tem essa métrica diretamente
-            "pvp": pvp_raw if pvp_raw > 0 else 1.0,
-            "debt_ratio": 0.3,  # Não disponível diretamente, usar padrão conservador
-            "vacancy_rate": round(vacancy_raw / 100, 4) if vacancy_raw > 1 else vacancy_raw,
-            "revenue_growth_12m": 0.0,  # Requer cálculo com séries históricas
-            "earnings_growth_12m": 0.0,
-            "daily_liquidity": liquidity_raw,
-            "net_asset_value": patrimonio_raw,
-            "last_dividend": last_div_raw,
+            "dividend_yield": round(dy_raw / 100, 4) if dy_raw > 1 else (dy_raw if dy_raw > 0 else None),
+            "dividend_consistency": None,  # enriched below from historical CSV
+            "pvp": pvp_raw if pvp_raw > 0 else None,
+            "debt_ratio": None,  # não disponível no StatusInvest — requer CVM
+            "vacancy_rate": (round(vacancy_raw / 100, 4) if vacancy_raw > 1 else vacancy_raw) if vacancy_raw > 0 else None,
+            "revenue_growth_12m": 0.0,  # enriched below from historical CSV
+            "earnings_growth_12m": 0.0,  # enriched below from historical CSV
+            "daily_liquidity": liquidity_raw if liquidity_raw > 0 else None,
+            "net_asset_value": patrimonio_raw if patrimonio_raw > 0 else None,
+            "last_dividend": last_div_raw if last_div_raw > 0 else None,
             "_source": "scraper",
         }
 
+        result = _enrich_with_history(result, ticker_clean)
         return result
 
     except requests.exceptions.Timeout:
@@ -296,6 +393,7 @@ def _scrape_status_invest(ticker: str) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 # API Pública
 # ---------------------------------------------------------------------------
+
 
 def fetch_fundamentals(
     ticker: str,
@@ -369,13 +467,13 @@ def fetch_fundamentals_bulk(
     for ticker in tickers:
         f = fetch_fundamentals(ticker, db_path, force_refresh)
         results[ticker] = f
-        
+
         # Rate limiting: aguarda 1.0 a 2.5 seg apenas se bateu no scraper (para evitar block)
         if f.get("_source") == "scraper":
             delay = random.uniform(1.0, 2.5)
             logger.debug(f"Rate limit: dormindo {delay:.2f}s após scraper de {ticker}")
             time.sleep(delay)
-            
+
     return results
 
 

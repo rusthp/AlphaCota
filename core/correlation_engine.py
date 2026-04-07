@@ -12,10 +12,10 @@ import math
 import statistics
 from typing import Optional
 
-
 # ---------------------------------------------------------------------------
 # Correlação
 # ---------------------------------------------------------------------------
+
 
 def calculate_pearson(a: list[float], b: list[float]) -> float:
     """
@@ -37,7 +37,7 @@ def calculate_pearson(a: list[float], b: list[float]) -> float:
     mean_a = sum(a) / n
     mean_b = sum(b) / n
 
-    num   = sum((a[i] - mean_a) * (b[i] - mean_b) for i in range(n))
+    num = sum((a[i] - mean_a) * (b[i] - mean_b) for i in range(n))
     den_a = math.sqrt(sum((a[i] - mean_a) ** 2 for i in range(n)))
     den_b = math.sqrt(sum((b[i] - mean_b) ** 2 for i in range(n)))
 
@@ -123,15 +123,17 @@ def find_high_correlation_pairs(
     tickers = list(matrix.keys())
 
     for i, t1 in enumerate(tickers):
-        for t2 in tickers[i + 1:]:
+        for t2 in tickers[i + 1 :]:
             corr = matrix[t1].get(t2, 0.0)
             if abs(corr) >= threshold:
-                pairs.append({
-                    "ticker_a": t1,
-                    "ticker_b": t2,
-                    "correlation": corr,
-                    "classification": classify_correlation(corr),
-                })
+                pairs.append(
+                    {
+                        "ticker_a": t1,
+                        "ticker_b": t2,
+                        "correlation": corr,
+                        "classification": classify_correlation(corr),
+                    }
+                )
 
     return sorted(pairs, key=lambda x: abs(x["correlation"]), reverse=True)
 
@@ -139,6 +141,7 @@ def find_high_correlation_pairs(
 # ---------------------------------------------------------------------------
 # Concentração por setor
 # ---------------------------------------------------------------------------
+
 
 def calculate_sector_concentration(
     portfolio: list[dict],
@@ -160,8 +163,8 @@ def calculate_sector_concentration(
 
     for ativo in portfolio:
         ticker = ativo.get("ticker", "")
-        valor  = ativo.get("quantidade", 0) * ativo.get("preco_atual", 0.0)
-        setor  = sector_map.get(ticker, "Outros")
+        valor = ativo.get("quantidade", 0) * ativo.get("preco_atual", 0.0)
+        setor = sector_map.get(ticker, "Outros")
 
         valor_por_setor[setor] = valor_por_setor.get(setor, 0.0) + valor
         valor_total += valor
@@ -169,10 +172,7 @@ def calculate_sector_concentration(
     if valor_total <= 0:
         return {}
 
-    return {
-        setor: round(valor / valor_total, 4)
-        for setor, valor in valor_por_setor.items()
-    }
+    return {setor: round(valor / valor_total, 4) for setor, valor in valor_por_setor.items()}
 
 
 def calculate_herfindahl_index(concentrations: dict[str, float]) -> float:
@@ -189,7 +189,7 @@ def calculate_herfindahl_index(concentrations: dict[str, float]) -> float:
     Returns:
         float: HHI entre 0.0 e 1.0.
     """
-    return round(sum(c ** 2 for c in concentrations.values()), 4)
+    return round(sum(c**2 for c in concentrations.values()), 4)
 
 
 def classify_concentration_risk(hhi: float) -> str:
@@ -215,6 +215,7 @@ def classify_concentration_risk(hhi: float) -> str:
 # ---------------------------------------------------------------------------
 # Risco sistêmico
 # ---------------------------------------------------------------------------
+
 
 def calculate_portfolio_volatility(
     weights: dict[str, float],
@@ -249,10 +250,10 @@ def calculate_portfolio_volatility(
     port_variance = 0.0
     for t1 in tickers:
         for t2 in tickers:
-            w1   = weights.get(t1, 0.0)
-            w2   = weights.get(t2, 0.0)
-            s1   = vols.get(t1, 0.0)
-            s2   = vols.get(t2, 0.0)
+            w1 = weights.get(t1, 0.0)
+            w2 = weights.get(t2, 0.0)
+            s1 = vols.get(t1, 0.0)
+            s2 = vols.get(t2, 0.0)
             corr = correlation_matrix.get(t1, {}).get(t2, 0.0)
             port_variance += w1 * w2 * s1 * s2 * corr
 
@@ -330,17 +331,17 @@ def analyse_portfolio_risk(
         weights[a["ticker"]] = (valor / valor_total) if valor_total > 0 else 0.0
 
     # Matriz de correlação
-    corr_matrix  = build_correlation_matrix(tickers, return_series)
-    high_corr    = find_high_correlation_pairs(corr_matrix, high_corr_threshold)
+    corr_matrix = build_correlation_matrix(tickers, return_series)
+    high_corr = find_high_correlation_pairs(corr_matrix, high_corr_threshold)
 
     # Concentração setorial
-    sector_conc  = calculate_sector_concentration(portfolio, sector_map)
-    hhi          = calculate_herfindahl_index(sector_conc)
-    conc_risk    = classify_concentration_risk(hhi)
+    sector_conc = calculate_sector_concentration(portfolio, sector_map)
+    hhi = calculate_herfindahl_index(sector_conc)
+    conc_risk = classify_concentration_risk(hhi)
 
     # Volatilidade e diversificação
-    port_vol     = calculate_portfolio_volatility(weights, return_series, corr_matrix)
-    div_ratio    = calculate_diversification_ratio(weights, return_series, corr_matrix)
+    port_vol = calculate_portfolio_volatility(weights, return_series, corr_matrix)
+    div_ratio = calculate_diversification_ratio(weights, return_series, corr_matrix)
 
     return {
         "correlation_matrix": corr_matrix,
@@ -381,14 +382,10 @@ def _generate_warnings(
 
     if hhi >= 0.40:
         warnings.append(
-            f"🔴 Concentração setorial muito alta (HHI={hhi:.2f}). "
-            "Distribua melhor entre setores diferentes."
+            f"🔴 Concentração setorial muito alta (HHI={hhi:.2f}). " "Distribua melhor entre setores diferentes."
         )
     elif hhi >= 0.25:
-        warnings.append(
-            f"🟡 Concentração setorial moderada (HHI={hhi:.2f}). "
-            "Avalie diversificação entre setores."
-        )
+        warnings.append(f"🟡 Concentração setorial moderada (HHI={hhi:.2f}). " "Avalie diversificação entre setores.")
 
     if div_ratio < 1.1:
         warnings.append(
@@ -402,6 +399,7 @@ def _generate_warnings(
 # ---------------------------------------------------------------------------
 # Rebalanceamento ciente de correlação
 # ---------------------------------------------------------------------------
+
 
 def suggest_rebalance_with_correlation(
     portfolio: list[dict],
@@ -443,9 +441,9 @@ def suggest_rebalance_with_correlation(
     suggestions = []
     for ticker, target_w in target_weights.items():
         current_w = current_weights.get(ticker, 0.0)
-        drift     = target_w - current_w
+        drift = target_w - current_w
 
-        # Penalidade: se o ativo está em par de alta correlação, 
+        # Penalidade: se o ativo está em par de alta correlação,
         # aumentar prioridade de redução
         corr_penalty = 0.0
         if ticker in high_corr_tickers and drift > 0:
@@ -459,15 +457,17 @@ def suggest_rebalance_with_correlation(
         elif drift < -0.02:
             action = "reduzir"
 
-        suggestions.append({
-            "ticker": ticker,
-            "current_weight": round(current_w, 4),
-            "target_weight": round(target_w, 4),
-            "drift": round(drift, 4),
-            "action": action,
-            "priority_score": round(priority_score, 4),
-            "high_correlation_warning": ticker in high_corr_tickers,
-        })
+        suggestions.append(
+            {
+                "ticker": ticker,
+                "current_weight": round(current_w, 4),
+                "target_weight": round(target_w, 4),
+                "drift": round(drift, 4),
+                "action": action,
+                "priority_score": round(priority_score, 4),
+                "high_correlation_warning": ticker in high_corr_tickers,
+            }
+        )
 
     # Ordenar por prioridade: maiores desvios primeiro
     suggestions.sort(key=lambda x: abs(x["drift"]), reverse=True)

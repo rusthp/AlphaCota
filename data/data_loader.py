@@ -15,6 +15,7 @@ from typing import Optional
 try:
     import yfinance as yf
     import pandas as pd
+
     HAS_YFINANCE = True
 except ImportError:
     HAS_YFINANCE = False
@@ -83,9 +84,7 @@ def fetch_prices(
         ValueError: Se o ticker for inválido ou não retornar dados.
     """
     if not HAS_YFINANCE:
-        raise ImportError(
-            "yfinance não instalado. Execute: pip install yfinance pandas"
-        )
+        raise ImportError("yfinance não instalado. Execute: pip install yfinance pandas")
 
     _ensure_dirs()
     cache_file = _cache_path(PRICES_DIR, ticker, "prices")
@@ -94,17 +93,12 @@ def fetch_prices(
         rows = _load_csv(cache_file)
         if rows:
             # Filtra pelo período solicitado
-            filtered = [
-                r for r in rows
-                if start_date <= r["date"] <= end_date
-            ]
+            filtered = [r for r in rows if start_date <= r["date"] <= end_date]
             if filtered:
                 return filtered
 
     # Adicionar sufixo .SA para FIIs brasileiros (mas não para índices como ^IFIX)
-    yf_ticker = ticker if ticker.startswith("^") else (
-        ticker if ticker.endswith(".SA") else f"{ticker}.SA"
-    )
+    yf_ticker = ticker if ticker.startswith("^") else (ticker if ticker.endswith(".SA") else f"{ticker}.SA")
 
     try:
         raw = yf.download(
@@ -119,21 +113,28 @@ def fetch_prices(
         raise ValueError(f"Erro ao buscar dados de '{ticker}' via yfinance: {e}")
 
     if raw is None or raw.empty:
-        raise ValueError(
-            f"Nenhum dado retornado para '{ticker}'. Verifique o ticker e o período."
-        )
+        raise ValueError(f"Nenhum dado retornado para '{ticker}'. Verifique o ticker e o período.")
+
+    def _sv(val, default=0.0) -> float:
+        """Converte valor que pode ser pandas Series ou escalar para float."""
+        try:
+            return float(val.iloc[0]) if hasattr(val, "iloc") else float(val)
+        except (TypeError, ValueError, IndexError):
+            return float(default)
 
     records = []
     for date_idx, row in raw.iterrows():
         date_str = str(date_idx)[:10]
-        records.append({
-            "date": date_str,
-            "open": round(float(row.get("Open", row.get("open", 0))), 4),
-            "high": round(float(row.get("High", row.get("high", 0))), 4),
-            "low": round(float(row.get("Low", row.get("low", 0))), 4),
-            "close": round(float(row.get("Close", row.get("close", 0))), 4),
-            "volume": int(row.get("Volume", row.get("volume", 0))),
-        })
+        records.append(
+            {
+                "date": date_str,
+                "open": round(_sv(row.get("Open", row.get("open", 0))), 4),
+                "high": round(_sv(row.get("High", row.get("high", 0))), 4),
+                "low": round(_sv(row.get("Low", row.get("low", 0))), 4),
+                "close": round(_sv(row.get("Close", row.get("close", 0))), 4),
+                "volume": int(_sv(row.get("Volume", row.get("volume", 0)))),
+            }
+        )
 
     if records:
         _save_csv(cache_file, records, ["date", "open", "high", "low", "close", "volume"])
@@ -164,9 +165,7 @@ def fetch_dividends(
         ImportError: Se yfinance não estiver instalado.
     """
     if not HAS_YFINANCE:
-        raise ImportError(
-            "yfinance não instalado. Execute: pip install yfinance pandas"
-        )
+        raise ImportError("yfinance não instalado. Execute: pip install yfinance pandas")
 
     _ensure_dirs()
     cache_file = _cache_path(DIVIDENDS_DIR, ticker, "dividends")
@@ -176,9 +175,7 @@ def fetch_dividends(
         if rows:
             return [r for r in rows if start_date <= r["date"] <= end_date]
 
-    yf_ticker = ticker if ticker.startswith("^") else (
-        ticker if ticker.endswith(".SA") else f"{ticker}.SA"
-    )
+    yf_ticker = ticker if ticker.startswith("^") else (ticker if ticker.endswith(".SA") else f"{ticker}.SA")
 
     try:
         ticker_obj = yf.Ticker(yf_ticker)
@@ -190,10 +187,12 @@ def fetch_dividends(
     if divs is not None and not divs.empty:
         for date_idx, value in divs.items():
             date_str = str(date_idx)[:10]
-            records.append({
-                "date": date_str,
-                "dividend": round(float(value), 6),
-            })
+            records.append(
+                {
+                    "date": date_str,
+                    "dividend": round(float(value), 6),
+                }
+            )
 
     if records:
         _save_csv(cache_file, records, ["date", "dividend"])

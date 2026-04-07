@@ -36,14 +36,16 @@ def register_screening_tools(mcp: Any) -> None:
             pvp = fund.get("pvp", 999)
 
             if pvp <= max_pvp and dy >= min_dy:
-                matches.append({
-                    "ticker": t,
-                    "name": fii.get("nome", t),
-                    "segment": sector_map.get(t, "Outros"),
-                    "dy": round(dy, 2),
-                    "pvp": round(pvp, 2),
-                    "desconto": round((1 - pvp) * 100, 1),
-                })
+                matches.append(
+                    {
+                        "ticker": t,
+                        "name": fii.get("nome", t),
+                        "segment": sector_map.get(t, "Outros"),
+                        "dy": round(dy, 2),
+                        "pvp": round(pvp, 2),
+                        "desconto": round((1 - pvp) * 100, 1),
+                    }
+                )
 
         matches.sort(key=lambda x: x["dy"], reverse=True)
         return {
@@ -80,14 +82,16 @@ def register_screening_tools(mcp: Any) -> None:
             liq = fund.get("daily_liquidity", 0)
 
             if dy >= min_dy and liq >= min_liquidity:
-                matches.append({
-                    "ticker": t,
-                    "name": fii.get("nome", t),
-                    "segment": sector_map.get(t, "Outros"),
-                    "dy": round(dy, 2),
-                    "pvp": round(fund.get("pvp", 0), 2),
-                    "liquidity": round(liq, 0),
-                })
+                matches.append(
+                    {
+                        "ticker": t,
+                        "name": fii.get("nome", t),
+                        "segment": sector_map.get(t, "Outros"),
+                        "dy": round(dy, 2),
+                        "pvp": round(fund.get("pvp", 0), 2),
+                        "liquidity": round(liq, 0),
+                    }
+                )
 
         matches.sort(key=lambda x: x["dy"], reverse=True)
         return {
@@ -148,15 +152,17 @@ def register_screening_tools(mcp: Any) -> None:
                 score = 0
 
             if score >= min_score:
-                opportunities.append({
-                    "ticker": t,
-                    "name": fii.get("nome", t),
-                    "segment": sector_map.get(t, "Outros"),
-                    "score": round(score, 0),
-                    "dy": round(dy, 2),
-                    "pvp": round(pvp, 2),
-                    "desconto": round((1 - pvp) * 100, 1) if pvp < 1 else 0,
-                })
+                opportunities.append(
+                    {
+                        "ticker": t,
+                        "name": fii.get("nome", t),
+                        "segment": sector_map.get(t, "Outros"),
+                        "score": round(score, 0),
+                        "dy": round(dy, 2),
+                        "pvp": round(pvp, 2),
+                        "desconto": round((1 - pvp) * 100, 1) if pvp < 1 else 0,
+                    }
+                )
 
         opportunities.sort(key=lambda x: x["score"], reverse=True)
         return {

@@ -47,9 +47,7 @@ class TestCacheDB:
         db = str(tmp_path / "test.db")
         conn = scraper._init_cache_db(db)
         # Table should exist
-        row = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='fundamentals_cache'"
-        ).fetchone()
+        row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='fundamentals_cache'").fetchone()
         assert row is not None
         conn.close()
 

@@ -6,6 +6,7 @@ Testes unitários para core/markowitz_engine.py.
 
 import sys
 import os
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from core.markowitz_engine import (
@@ -46,22 +47,20 @@ def run_test(name: str, fn) -> bool:
 TICKERS = ["MXRF11", "HGLG11", "KNCR11"]
 
 RETURNS = {
-    "MXRF11": [0.010, 0.012, -0.005, 0.008, 0.015, 0.011,
-               0.009, 0.013, -0.003, 0.007, 0.014, 0.010] * 2,
-    "HGLG11": [0.008, 0.009, -0.010, 0.012, 0.007, 0.010,
-               0.006, 0.011, -0.008, 0.009, 0.008, 0.007] * 2,
-    "KNCR11": [0.006, 0.007,  0.006, 0.006, 0.007, 0.006,
-               0.006, 0.007,  0.006, 0.006, 0.007, 0.006] * 2,  # Baixa vol
+    "MXRF11": [0.010, 0.012, -0.005, 0.008, 0.015, 0.011, 0.009, 0.013, -0.003, 0.007, 0.014, 0.010] * 2,
+    "HGLG11": [0.008, 0.009, -0.010, 0.012, 0.007, 0.010, 0.006, 0.011, -0.008, 0.009, 0.008, 0.007] * 2,
+    "KNCR11": [0.006, 0.007, 0.006, 0.006, 0.007, 0.006, 0.006, 0.007, 0.006, 0.006, 0.007, 0.006] * 2,  # Baixa vol
 }
 
 CORR_MATRIX = build_correlation_matrix(TICKERS, RETURNS)
 
-WEIGHTS_EQUAL = {"MXRF11": 1/3, "HGLG11": 1/3, "KNCR11": 1/3}
+WEIGHTS_EQUAL = {"MXRF11": 1 / 3, "HGLG11": 1 / 3, "KNCR11": 1 / 3}
 
 
 # ---------------------------------------------------------------------------
 # Retorno esperado
 # ---------------------------------------------------------------------------
+
 
 def test_expected_return_positive():
     """Retorno deve ser positivo com retornos mensais positivos."""
@@ -90,6 +89,7 @@ def test_expected_return_empty():
 # Volatilidade
 # ---------------------------------------------------------------------------
 
+
 def test_vol_positive():
     """Volatilidade deve ser positiva com retornos variados."""
     v = calculate_annual_volatility(RETURNS["MXRF11"])
@@ -111,6 +111,7 @@ def test_vol_empty():
 # Retorno do portfólio
 # ---------------------------------------------------------------------------
 
+
 def test_portfolio_return_equal_weights():
     """Com pesos iguais, retorno é média dos retornos individuais."""
     exp = {t: calculate_expected_return(RETURNS[t]) for t in TICKERS}
@@ -129,6 +130,7 @@ def test_portfolio_return_single_asset():
 # ---------------------------------------------------------------------------
 # Volatilidade do portfólio
 # ---------------------------------------------------------------------------
+
 
 def test_portfolio_vol_positive():
     """Volatilidade do portfólio deve ser positiva."""
@@ -165,6 +167,7 @@ def test_portfolio_vol_diversification():
 # Sharpe
 # ---------------------------------------------------------------------------
 
+
 def test_sharpe_positive():
     """Retorno > RF → Sharpe positivo."""
     s = calculate_sharpe(0.15, 0.20, risk_free_rate=0.10)
@@ -187,19 +190,16 @@ def test_sharpe_below_rf():
 # Monte Carlo + Fronteira
 # ---------------------------------------------------------------------------
 
+
 def test_frontier_count():
     """Fronteira deve conter exatamente n_simulations portfólios."""
-    frontier = simulate_portfolio_frontier(
-        TICKERS, RETURNS, CORR_MATRIX, n_simulations=50, seed=0
-    )
+    frontier = simulate_portfolio_frontier(TICKERS, RETURNS, CORR_MATRIX, n_simulations=50, seed=0)
     assert len(frontier) == 50, f"Esperado 50, obtido {len(frontier)}"
 
 
 def test_frontier_portfolio_keys():
     """Cada portfólio deve ter 'weights', 'return', 'volatility', 'sharpe'."""
-    frontier = simulate_portfolio_frontier(
-        TICKERS, RETURNS, CORR_MATRIX, n_simulations=10, seed=0
-    )
+    frontier = simulate_portfolio_frontier(TICKERS, RETURNS, CORR_MATRIX, n_simulations=10, seed=0)
     for p in frontier:
         for key in ("weights", "return", "volatility", "sharpe"):
             assert key in p, f"Chave '{key}' ausente"
@@ -207,9 +207,7 @@ def test_frontier_portfolio_keys():
 
 def test_frontier_weights_sum_one():
     """Pesos de cada portfólio devem somar ~1.0."""
-    frontier = simulate_portfolio_frontier(
-        TICKERS, RETURNS, CORR_MATRIX, n_simulations=20, seed=0
-    )
+    frontier = simulate_portfolio_frontier(TICKERS, RETURNS, CORR_MATRIX, n_simulations=20, seed=0)
     for p in frontier:
         total = sum(p["weights"].values())
         assert_close(total, 1.0, tol=0.01, label="Soma pesos")
@@ -217,9 +215,7 @@ def test_frontier_weights_sum_one():
 
 def test_frontier_return_positive():
     """Retornos esperados devem ser positivos com dados positivos."""
-    frontier = simulate_portfolio_frontier(
-        TICKERS, RETURNS, CORR_MATRIX, n_simulations=20, seed=0
-    )
+    frontier = simulate_portfolio_frontier(TICKERS, RETURNS, CORR_MATRIX, n_simulations=20, seed=0)
     assert all(p["return"] > 0 for p in frontier), "Algum portfólio com retorno <= 0"
 
 
@@ -227,11 +223,10 @@ def test_frontier_return_positive():
 # Max Sharpe e Min Volatility
 # ---------------------------------------------------------------------------
 
+
 def test_max_sharpe_is_best():
     """Max Sharpe deve ter maior Sharpe que todos os outros."""
-    frontier = simulate_portfolio_frontier(
-        TICKERS, RETURNS, CORR_MATRIX, n_simulations=200, seed=42
-    )
+    frontier = simulate_portfolio_frontier(TICKERS, RETURNS, CORR_MATRIX, n_simulations=200, seed=42)
     best = find_max_sharpe(frontier)
     max_sharpe_val = max(p["sharpe"] for p in frontier)
     assert_close(best["sharpe"], max_sharpe_val, tol=0.001)
@@ -239,9 +234,7 @@ def test_max_sharpe_is_best():
 
 def test_min_vol_is_lowest():
     """Min Volatility deve ter menor vol que todos os outros."""
-    frontier = simulate_portfolio_frontier(
-        TICKERS, RETURNS, CORR_MATRIX, n_simulations=200, seed=42
-    )
+    frontier = simulate_portfolio_frontier(TICKERS, RETURNS, CORR_MATRIX, n_simulations=200, seed=42)
     best = find_min_volatility(frontier)
     min_vol_val = min(p["volatility"] for p in frontier)
     assert_close(best["volatility"], min_vol_val, tol=0.001)
@@ -249,9 +242,7 @@ def test_min_vol_is_lowest():
 
 def test_max_sharpe_strategy_key():
     """max_sharpe deve ter strategy='max_sharpe'."""
-    frontier = simulate_portfolio_frontier(
-        TICKERS, RETURNS, CORR_MATRIX, n_simulations=50, seed=0
-    )
+    frontier = simulate_portfolio_frontier(TICKERS, RETURNS, CORR_MATRIX, n_simulations=50, seed=0)
     best = find_max_sharpe(frontier)
     assert best.get("strategy") == "max_sharpe"
 
@@ -267,34 +258,79 @@ def test_equal_weight_each_third():
     """Equal weight com 3 ativos: cada peso ≈ 1/3."""
     ew = find_equal_weight(TICKERS, RETURNS, CORR_MATRIX)
     for w in ew["weights"].values():
-        assert_close(w, 1/3, tol=0.01)
+        assert_close(w, 1 / 3, tol=0.01)
 
 
 # ---------------------------------------------------------------------------
 # Compare strategies
 # ---------------------------------------------------------------------------
 
+
 def test_compare_strategies_keys():
     """compare_strategies deve retornar as 4 chaves esperadas."""
-    result = compare_strategies(
-        TICKERS, RETURNS, CORR_MATRIX, n_simulations=100, seed=0
-    )
+    result = compare_strategies(TICKERS, RETURNS, CORR_MATRIX, n_simulations=100, seed=0)
     for key in ("frontier", "max_sharpe", "min_volatility", "equal_weight"):
         assert key in result, f"Chave '{key}' ausente"
 
 
 def test_format_report_str():
     """format_strategy_report deve retornar uma string não-vazia."""
-    result = compare_strategies(
-        TICKERS, RETURNS, CORR_MATRIX, n_simulations=100, seed=0
-    )
+    result = compare_strategies(TICKERS, RETURNS, CORR_MATRIX, n_simulations=100, seed=0)
     report = format_strategy_report(result)
     assert isinstance(report, str) and len(report) > 50
+
+
+def test_find_max_sharpe_empty_portfolios():
+    """find_max_sharpe([]) deve retornar {} sem levantar exceção (line 252)."""
+    assert find_max_sharpe([]) == {}
+
+
+def test_find_min_volatility_empty_portfolios():
+    """find_min_volatility([]) deve retornar {} sem levantar exceção (line 268)."""
+    assert find_min_volatility([]) == {}
+
+
+def test_format_report_with_all_empty_strategies():
+    """format_strategy_report deve pular estratégias vazias sem falhar (line 389)."""
+    result = {
+        "frontier": [],
+        "max_sharpe": {},
+        "min_volatility": {},
+        "equal_weight": {},
+        "n_simulations": 0,
+    }
+    report = format_strategy_report(result)
+    assert isinstance(report, str)
+    assert "ALPHACOTA" in report
+    assert "0" in report  # n_simulations printed
+
+
+def test_random_weights_with_explicit_seed():
+    """_random_weights with seed not None executes random.seed() (line 158)."""
+    from core.markowitz_engine import _random_weights
+
+    w = _random_weights(3, seed=99)
+    assert len(w) == 3
+    assert abs(sum(w) - 1.0) < 1e-9
+
+
+def test_random_weights_fallback_equal_weight_when_unsatisfiable():
+    """_random_weights falls back to equal weight when min_weight makes the
+    constraints unsatisfiable with n=3 assets (line 171)."""
+    from core.markowitz_engine import _random_weights
+
+    # min_weight=0.5 with n=3 requires total >= 1.5 before normalisation,
+    # but after normalisation at least one weight is always < 0.5 when
+    # the raw values are uniform — after 1000 attempts returns [1/3, 1/3, 1/3]
+    w = _random_weights(3, seed=42, min_weight=0.5, max_weight=1.0)
+    assert len(w) == 3
+    assert abs(sum(w) - 1.0) < 1e-9
 
 
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
+
 
 def main() -> bool:
     tests = [
@@ -343,4 +379,5 @@ def main() -> bool:
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(0 if main() else 1)

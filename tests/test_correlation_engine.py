@@ -6,6 +6,7 @@ Testes unitários para core/correlation_engine.py.
 
 import sys
 import os
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from core.correlation_engine import (
@@ -62,8 +63,8 @@ RETURN_SERIES = {
 
 PORTFOLIO = [
     {"ticker": TICKER_A, "quantidade": 100, "preco_atual": 10.0},
-    {"ticker": TICKER_B, "quantidade": 10,  "preco_atual": 155.0},
-    {"ticker": TICKER_C, "quantidade": 50,  "preco_atual": 97.0},
+    {"ticker": TICKER_B, "quantidade": 10, "preco_atual": 155.0},
+    {"ticker": TICKER_C, "quantidade": 50, "preco_atual": 97.0},
 ]
 
 SECTOR_MAP = {
@@ -76,6 +77,7 @@ SECTOR_MAP = {
 # ---------------------------------------------------------------------------
 # Pearson
 # ---------------------------------------------------------------------------
+
 
 def test_pearson_perfect():
     """Correlação perfeita deve retornar 1.0."""
@@ -105,6 +107,7 @@ def test_pearson_bounds():
 # Matriz de correlação
 # ---------------------------------------------------------------------------
 
+
 def test_matrix_diagonal():
     """Diagonal deve ser 1.0 (autocorrelação)."""
     matrix = build_correlation_matrix([TICKER_A, TICKER_B, TICKER_C], RETURN_SERIES)
@@ -131,20 +134,26 @@ def test_matrix_full():
 # Classificação
 # ---------------------------------------------------------------------------
 
+
 def test_classify_very_high():
     assert classify_correlation(0.90) == "Muito Alta"
+
 
 def test_classify_high():
     assert classify_correlation(0.70) == "Alta"
 
+
 def test_classify_moderate():
     assert classify_correlation(0.50) == "Moderada"
+
 
 def test_classify_low():
     assert classify_correlation(0.25) == "Baixa"
 
+
 def test_classify_negligible():
     assert classify_correlation(0.05) == "Desprezível"
+
 
 def test_classify_negative_high():
     assert classify_correlation(-0.90) == "Muito Alta"
@@ -153,6 +162,7 @@ def test_classify_negative_high():
 # ---------------------------------------------------------------------------
 # Alta correlação
 # ---------------------------------------------------------------------------
+
 
 def test_find_high_corr():
     """MXRF11 e HGLG11 (correlação 1.0) devem aparecer como par problemático."""
@@ -173,6 +183,7 @@ def test_find_high_corr_threshold_one():
 # ---------------------------------------------------------------------------
 # Concentração setorial
 # ---------------------------------------------------------------------------
+
 
 def test_sector_concentration_sums_one():
     """Soma das concentrações deve ser ~1.0."""
@@ -203,6 +214,7 @@ def test_hhi_monopoly():
 def test_classify_diversified():
     assert classify_concentration_risk(0.10) == "Diversificado"
 
+
 def test_classify_concentrated():
     assert classify_concentration_risk(0.45) == "Altamente Concentrado"
 
@@ -210,6 +222,7 @@ def test_classify_concentrated():
 # ---------------------------------------------------------------------------
 # Volatilidade e diversificação
 # ---------------------------------------------------------------------------
+
 
 def test_portfolio_volatility_positive():
     """Volatilidade do portfólio deve ser positiva com dados válidos."""
@@ -233,13 +246,21 @@ def test_diversification_ratio_perfect_corr():
 # Análise completa
 # ---------------------------------------------------------------------------
 
+
 def test_analyse_portfolio_risk_keys():
     """Resultado deve conter todas as chaves esperadas."""
     matrix = build_correlation_matrix([TICKER_A, TICKER_B, TICKER_C], RETURN_SERIES)
     result = analyse_portfolio_risk(PORTFOLIO, RETURN_SERIES, SECTOR_MAP)
-    expected = {"correlation_matrix", "high_correlation_pairs", "sector_concentration",
-                "herfindahl_index", "concentration_risk", "portfolio_annual_volatility",
-                "diversification_ratio", "warnings"}
+    expected = {
+        "correlation_matrix",
+        "high_correlation_pairs",
+        "sector_concentration",
+        "herfindahl_index",
+        "concentration_risk",
+        "portfolio_annual_volatility",
+        "diversification_ratio",
+        "warnings",
+    }
     assert expected == set(result.keys()), f"Chaves faltando: {expected - set(result.keys())}"
 
 
@@ -254,6 +275,7 @@ def test_analyse_warnings_generated():
 # ---------------------------------------------------------------------------
 # Edge cases para cobertura
 # ---------------------------------------------------------------------------
+
 
 def test_pearson_zero_stdev():
     """Constant series (zero stdev) should return 0.0."""
@@ -302,6 +324,7 @@ def test_diversification_ratio_short_series():
 def test_generate_warnings_moderate_hhi():
     """HHI between 0.25 and 0.40 should produce moderate concentration warning."""
     from core.correlation_engine import _generate_warnings
+
     warnings = _generate_warnings([], 0.30, 1.5)
     assert any("Moderada" in w or "moderada" in w for w in warnings)
 
@@ -309,6 +332,7 @@ def test_generate_warnings_moderate_hhi():
 def test_generate_warnings_low_div_ratio():
     """Diversification ratio < 1.1 should produce warning."""
     from core.correlation_engine import _generate_warnings
+
     warnings = _generate_warnings([], 0.10, 0.9)
     assert any("Diversification Ratio" in w for w in warnings)
 
@@ -319,7 +343,11 @@ def test_suggest_rebalance_with_correlation():
     matrix = build_correlation_matrix(tickers, RETURN_SERIES)
     target_weights = {TICKER_A: 0.40, TICKER_B: 0.30, TICKER_C: 0.30}
     result = suggest_rebalance_with_correlation(
-        PORTFOLIO, target_weights, RETURN_SERIES, matrix, high_corr_threshold=0.80,
+        PORTFOLIO,
+        target_weights,
+        RETURN_SERIES,
+        matrix,
+        high_corr_threshold=0.80,
     )
     assert "suggestions" in result
     assert "high_correlation_pairs" in result
@@ -339,7 +367,11 @@ def test_suggest_rebalance_corr_penalty():
     # Set target so TICKER_A needs buying (positive drift) and is in high-corr pair
     target_weights = {TICKER_A: 0.90, TICKER_B: 0.10}
     result = suggest_rebalance_with_correlation(
-        PORTFOLIO[:2], target_weights, RETURN_SERIES, matrix, high_corr_threshold=0.80,
+        PORTFOLIO[:2],
+        target_weights,
+        RETURN_SERIES,
+        matrix,
+        high_corr_threshold=0.80,
     )
     # Both tickers are perfectly correlated, so both should be flagged
     for s in result["suggestions"]:
@@ -360,7 +392,10 @@ def test_suggest_rebalance_manter_action():
         TICKER_B: round(valor_b / total, 4),
     }
     result = suggest_rebalance_with_correlation(
-        PORTFOLIO[:2], target_weights, RETURN_SERIES, matrix,
+        PORTFOLIO[:2],
+        target_weights,
+        RETURN_SERIES,
+        matrix,
     )
     for s in result["suggestions"]:
         assert s["action"] == "manter"
@@ -369,6 +404,7 @@ def test_suggest_rebalance_manter_action():
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
+
 
 def main() -> bool:
     tests = [
@@ -416,4 +452,5 @@ def main() -> bool:
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(0 if main() else 1)

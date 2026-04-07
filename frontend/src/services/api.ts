@@ -29,15 +29,45 @@ export interface FII {
   price: number;
   change: number;
   dy: number;
-  pvp: number;
+  pvp: number | null;
   score: number;
   liquidity: number;
   _source: string;
+  data_confidence?: number;
+  low_liquidity?: boolean;
+  dividend_trap?: boolean;
+  pvp_outlier?: boolean;
+  volatilidade_30d?: number;
 }
 
 export interface ScannerResponse {
   fiis: FII[];
   total: number;
+}
+
+export interface PricePoint {
+  month: string; // "YYYY-MM"
+  price: number;
+}
+
+export interface DividendPoint {
+  month: string; // "YYYY-MM"
+  value: number;
+}
+
+export interface ScoreBreakdown {
+  fundamentos: number; // 0-25
+  rendimento: number; // 0-25
+  risco: number; // 0-25
+  liquidez: number; // 0-25
+  total: number; // 0-100
+}
+
+export interface FundInfo {
+  administrador?: string;
+  cnpj?: string;
+  patrimonio_liquido?: number;
+  num_cotistas?: number;
 }
 
 export interface FIIDetail {
@@ -49,6 +79,16 @@ export interface FIIDetail {
   dividend_source: string;
   fundamentals: Record<string, unknown>;
   evaluation: Record<string, unknown>;
+  // Extended fields (enhance-fii-detail-page)
+  score_breakdown?: ScoreBreakdown;
+  price_history?: PricePoint[];
+  dividend_history?: DividendPoint[];
+  fund_info?: FundInfo;
+  cap_rate?: number | null;
+  volatilidade_30d?: number | null;
+  num_imoveis?: number | null;
+  num_locatarios?: number | null;
+  data_confidence?: number;
 }
 
 export interface MacroSnapshot {
@@ -89,6 +129,13 @@ export interface AIAnalysisResult {
   ticker: string;
   news?: NewsItem[];
   news_count?: number;
+  sentiment_score?: number;
+  cached?: boolean;
+}
+
+export interface AIBatchResponse {
+  success: boolean;
+  results: AIAnalysisResult[];
 }
 
 // ---------------------------------------------------------------------------
@@ -126,10 +173,15 @@ export function fetchCorrelation(tickers: string[], startDate = "2023-01-01", en
 }
 
 /** Stress test */
-export function fetchStressTest(tickers: string[], quantities: Record<string, number> = {}, scenarios: string[] = []) {
+export function fetchStressTest(
+  tickers: string[],
+  quantities: Record<string, number> = {},
+  scenarios: string[] = [],
+  custom_scenario?: { name: string; price_shock: Record<string, number>; dividend_shock: Record<string, number> }
+) {
   return fetchJSON<{ scenarios: Array<Record<string, unknown>> }>(
     "/api/stress",
-    { method: "POST", body: JSON.stringify({ tickers, quantities, scenarios }) },
+    { method: "POST", body: JSON.stringify({ tickers, quantities, scenarios, custom_scenario }) },
   );
 }
 
@@ -158,7 +210,7 @@ export function fetchSimulate(params: {
   tickers: string[];
   quantities?: Record<string, number>;
   aporte_mensal?: number;
-  target_allocation?: Record<string, float>;
+  target_allocation?: Record<string, number>;
   meses?: number;
 }) {
   return fetchJSON<Record<string, unknown>>("/api/simulate", {
@@ -174,8 +226,11 @@ export function fetchMonteCarlo(params: {
   aporte_mensal?: number;
   meses?: number;
   simulacoes?: number;
+  override_initial_capital?: number;
+  growth_rates?: Record<string, number>;
+  volatilities?: Record<string, number>;
 }) {
-  return fetchJSON<Record<string, unknown>>("/api/monte-carlo", {
+  return fetchJSON<any>("/api/monte-carlo", {
     method: "POST",
     body: JSON.stringify(params),
   });
@@ -189,6 +244,30 @@ export function fetchAIAnalysis(ticker: string, apiKey?: string): Promise<AIAnal
   });
 }
 
+/** AI Batch analysis */
+export function fetchAIBatchAnalysis(tickers: string[], apiKey?: string): Promise<AIBatchResponse> {
+  return fetchJSON("/api/ai/analyze-batch", {
+    method: "POST",
+    body: JSON.stringify({ tickers, api_key: apiKey }),
+  });
+}
+
+/** Obter Histórico de Score SQLite */
+export function fetchScoreHistory(ticker: string, limit: number = 12): Promise<{ ticker: string, timeline: { date: string, score: number, details: any }[] }> {
+  return fetchJSON(`/api/fiis/${ticker}/history?limit=${limit}`);
+}
+
+/** Obter Histórico de Sentimento SQLite */
+export function fetchSentimentTrend(ticker: string, limit: number = 5): Promise<{ ticker: string, trend: { date: string, sentiment: string, reason: string }[] }> {
+  return fetchJSON(`/api/ai/sentiment/trend/${ticker}?limit=${limit}`);
+}
+
+/** Obter Alertas de Queda de Score (SQLite) */
+export function fetchScoreAlerts(tickers: string[], threshold: number = 10.0): Promise<{ alerts: { ticker: string, latest_score: number, previous_score: number, drop: number, date: string }[], count: number }> {
+  const ts = tickers.join(",");
+  return fetchJSON(`/api/fiis/alerts?tickers=${ts}&threshold=${threshold}`);
+}
+
 /** Notícias de um FII */
 export function fetchNews(ticker: string, limit = 5) {
   return fetchJSON<{ ticker: string; news: NewsItem[]; count: number }>(`/api/news/${ticker.toUpperCase()}?limit=${limit}`);
@@ -197,4 +276,95 @@ export function fetchNews(ticker: string, limit = 5) {
 /** Health check */
 export function fetchHealth() {
   return fetchJSON<{ status: string; version: string }>("/health");
+}
+
+// ---------------------------------------------------------------------------
+// Dividend Calendar
+// ---------------------------------------------------------------------------
+
+export interface DividendEvent {
+  ticker: string;
+  ex_date: string;
+  pay_date: string;
+  valor_por_cota: number;
+  tipo: string;
+  fonte: string;
+  confirmado: boolean;
+  setor: string;
+}
+
+export interface CalendarMonth {
+  year: number;
+  month: number;
+  events: DividendEvent[];
+  total: number;
+}
+
+export interface IncomeMonth {
+  month: string;
+  total_renda: number;
+  events: DividendEvent[];
+}
+
+export function fetchDividendCalendar(year: number, month: number, tickers?: string): Promise<CalendarMonth> {
+  const params = new URLSearchParams({ year: String(year), month: String(month) });
+  if (tickers) params.set("tickers", tickers);
+  return fetchJSON<CalendarMonth>(`/api/dividends/calendar?${params}`);
+}
+
+export interface UpcomingDividendEvent extends DividendEvent {
+  days_to_pay: number;
+  days_to_ex: number;
+  is_ex_soon: boolean;
+}
+
+export function fetchUpcomingDividends(daysAhead = 30, tickers?: string): Promise<{ events: UpcomingDividendEvent[]; total: number }> {
+  const params = new URLSearchParams({ days_ahead: String(daysAhead) });
+  if (tickers) params.set("tickers", tickers);
+  return fetchJSON(`/api/dividends/upcoming?${params}`);
+}
+
+export function fetchPortfolioIncome(holdings: Record<string, number>, monthsAhead = 12): Promise<{ projection: IncomeMonth[] }> {
+  const params = new URLSearchParams({
+    holdings: JSON.stringify(holdings),
+    months_ahead: String(monthsAhead),
+  });
+  return fetchJSON<{ projection: IncomeMonth[] }>(`/api/dividends/portfolio-income?${params}`);
+}
+
+// ---------------------------------------------------------------------------
+// Rebalanceamento
+// ---------------------------------------------------------------------------
+
+export interface RebalanceSuggestion {
+  ticker: string;
+  segment: string;
+  action: "buy" | "overweight";
+  quantity: number;
+  value: number;
+  currentPct: number;
+  targetPct: number;
+  score: number;
+}
+
+// ---------------------------------------------------------------------------
+// FII Comparador
+// ---------------------------------------------------------------------------
+
+export interface CompareableFII extends FIIDetail {
+  dy: number;
+  pvp: number;
+  liquidez: number;
+  vacancia: number;
+  score: number;
+}
+
+export interface CompareResponse {
+  fiis: CompareableFII[];
+}
+
+export function fetchCompare(tickers: string[]): Promise<CompareResponse> {
+  return fetchJSON<CompareResponse>(
+    `/api/fiis/compare?tickers=${tickers.map((t) => encodeURIComponent(t)).join(",")}`,
+  );
 }

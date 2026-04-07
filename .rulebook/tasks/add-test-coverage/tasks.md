@@ -10,7 +10,7 @@
 - [x] 1.9 Write tests for `core/quant_engine.py` → `tests/test_quant_engine.py`
 - [x] 1.10 Write tests for `core/profile_allocator.py` → `tests/test_profile_allocator.py`
 - [x] 1.11 Write tests for `core/class_rebalancer.py` → `tests/test_class_rebalancer.py`
-- [ ] 1.12 Write tests for `core/state_repository.py`
+- [x] 1.12 Write tests for `core/state_repository.py` → `tests/test_state_repository.py`
 - [x] 1.13 Write tests for `core/security.py` → `tests/test_security.py`
 
 ## 2. Service Layer Tests
@@ -23,14 +23,16 @@
 - [x] 3.1 Write tests for `data/data_loader.py` → `tests/test_data_loader.py`
 - [x] 3.2 Write tests for `data/data_bridge.py` → `tests/test_data_bridge.py`
 - [x] 3.3 Write tests for `data/fundamentals_scraper.py` → `tests/test_fundamentals_scraper.py`
+- [x] 3.4 Write tests for `data/cvm_b3_client.py` → `tests/test_cvm_b3_client.py`
+- [x] 3.5 Write tests for `data/fundsexplorer_scraper.py` → `tests/test_fundsexplorer_scraper.py`
 
 ## 4. API / Infra / CLI Tests
-- [x] 4.1 Write tests for `api/main.py` → `tests/test_api.py`
+- [x] 4.1 Write tests for `api/main.py` → `tests/test_api.py` (29 tests, all endpoints)
 - [x] 4.2 Write tests for `infra/database.py` → `tests/test_database.py`
-- [ ] 4.3 Write tests for `scripts/alphacota_cli.py`
+- [x] 4.3 Write tests for `scripts/alphacota_cli.py` → `tests/test_alphacota_cli.py` (22 tests)
 
 ## 5. Cleanup and Finalization
 - [x] 5.1 Migrate useful manual scripts from `/scripts/` to `/tests/`
 - [x] 5.2 Remove obsolete manual test scripts from `/scripts/`
-- [ ] 5.3 Update CI threshold from `--cov-fail-under=80` to `--cov-fail-under=95`
-- [ ] 5.4 Verify full test suite passes with 95%+ coverage (currently 96%, 581 tests)
+- [x] 5.3 Update CI threshold from `--cov-fail-under=80` to `--cov-fail-under=95`
+- [x] 5.4 Verify full test suite passes with 95%+ coverage (96.71%, 668 tests)

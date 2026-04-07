@@ -38,10 +38,10 @@ from core.score_engine import (
     DEFAULT_WEIGHTS,
 )
 
-
 # ---------------------------------------------------------------------------
 # Utilitários de teste
 # ---------------------------------------------------------------------------
+
 
 def assert_close(a: float, b: float, tol: float = 0.001, label: str = "") -> None:
     """Verifica que dois floats são aproximadamente iguais."""
@@ -69,6 +69,7 @@ def run_test(name: str, fn):
 # Testes: calculate_cagr
 # ---------------------------------------------------------------------------
 
+
 def test_cagr_basic():
     """CAGR de R$1000 → R$1210 em 2 anos = 10% a.a."""
     result = calculate_cagr(1000.0, 1210.0, 2.0)
@@ -90,6 +91,7 @@ def test_cagr_zero_initial():
 # ---------------------------------------------------------------------------
 # Testes: calculate_max_drawdown
 # ---------------------------------------------------------------------------
+
 
 def test_max_drawdown_basic():
     """Queda de 1000 → 700 = drawdown de 30%."""
@@ -114,6 +116,7 @@ def test_max_drawdown_single_value():
 # ---------------------------------------------------------------------------
 # Testes: calculate_sharpe e calculate_sortino
 # ---------------------------------------------------------------------------
+
 
 def test_sharpe_positive_excess():
     """Sharpe positivo quando retornos têm variância e excedem a taxa livre de risco."""
@@ -144,6 +147,7 @@ def test_sortino_no_downside():
 # Testes: calculate_annual_volatility
 # ---------------------------------------------------------------------------
 
+
 def test_annual_volatility_known():
     """Volatilidade de uma série com dispersão conhecida."""
     # Retornos alternantes de +10% e -10%
@@ -162,6 +166,7 @@ def test_annual_volatility_constant():
 # ---------------------------------------------------------------------------
 # Testes: _should_rebalance
 # ---------------------------------------------------------------------------
+
 
 def test_rebalance_monthly():
     """Todos os meses devem rebalancear."""
@@ -189,13 +194,14 @@ def test_rebalance_semiannual():
 # Testes: run_backtest
 # ---------------------------------------------------------------------------
 
+
 def _make_price_series(base: float, months: int, monthly_return: float = 0.008) -> list[float]:
     """Cria série de preços crescendo a uma taxa mensal constante."""
     prices = []
     price = base
     for _ in range(months):
         prices.append(round(price, 4))
-        price *= (1 + monthly_return)
+        price *= 1 + monthly_return
     return prices
 
 
@@ -289,6 +295,7 @@ def test_run_backtest_missing_ticker():
 # Testes: compare_against_benchmark
 # ---------------------------------------------------------------------------
 
+
 def test_compare_benchmark_basic():
     """Comparação de backtest vs benchmark deve retornar alpha e flag."""
     tickers = ["MXRF11"]
@@ -310,6 +317,7 @@ def test_compare_benchmark_basic():
 # ---------------------------------------------------------------------------
 # Testes: score_engine
 # ---------------------------------------------------------------------------
+
 
 def test_validate_weights_valid():
     """Pesos válidos não devem lançar exceção."""
@@ -368,12 +376,26 @@ def test_calculate_alpha_score_returns_dict():
 def test_rank_fiis():
     """rank_fiis deve retornar lista ordenada pelo alpha_score decrescente."""
     fiis = [
-        {"ticker": "MXRF11", "dividend_yield": 0.12, "dividend_consistency": 9.0,
-         "pvp": 0.95, "debt_ratio": 0.2, "vacancy_rate": 0.02,
-         "revenue_growth_12m": 0.10, "earnings_growth_12m": 0.08},
-        {"ticker": "XPLG11", "dividend_yield": 0.07, "dividend_consistency": 6.0,
-         "pvp": 1.20, "debt_ratio": 0.5, "vacancy_rate": 0.15,
-         "revenue_growth_12m": 0.03, "earnings_growth_12m": 0.02},
+        {
+            "ticker": "MXRF11",
+            "dividend_yield": 0.12,
+            "dividend_consistency": 9.0,
+            "pvp": 0.95,
+            "debt_ratio": 0.2,
+            "vacancy_rate": 0.02,
+            "revenue_growth_12m": 0.10,
+            "earnings_growth_12m": 0.08,
+        },
+        {
+            "ticker": "XPLG11",
+            "dividend_yield": 0.07,
+            "dividend_consistency": 6.0,
+            "pvp": 1.20,
+            "debt_ratio": 0.5,
+            "vacancy_rate": 0.15,
+            "revenue_growth_12m": 0.03,
+            "earnings_growth_12m": 0.02,
+        },
     ]
     ranked = rank_fiis(fiis)
     assert ranked[0]["alpha_score"] >= ranked[1]["alpha_score"]
@@ -383,6 +405,7 @@ def test_rank_fiis():
 # ---------------------------------------------------------------------------
 # Edge cases for coverage
 # ---------------------------------------------------------------------------
+
 
 def test_sharpe_short_series():
     """Sharpe with < 2 returns should return 0.0."""
@@ -423,6 +446,7 @@ def test_rebalance_portfolio_zero_value():
 def test_run_backtest_empty_tickers():
     """Empty ticker list should raise ValueError."""
     import pytest
+
     with pytest.raises(ValueError, match="vazia"):
         run_backtest([], {}, {}, {}, 100.0)
 
@@ -430,6 +454,7 @@ def test_run_backtest_empty_tickers():
 def test_run_backtest_empty_price_series():
     """Empty price series should raise ValueError."""
     import pytest
+
     with pytest.raises(ValueError, match="vazias"):
         run_backtest(["MXRF11"], {"MXRF11": 1.0}, {"MXRF11": []}, {}, 100.0)
 
@@ -437,10 +462,14 @@ def test_run_backtest_empty_price_series():
 def test_run_backtest_zero_weights():
     """Zero weights should raise ValueError."""
     import pytest
+
     with pytest.raises(ValueError, match="inválidos"):
         run_backtest(
-            ["MXRF11"], {"MXRF11": 0.0},
-            {"MXRF11": [10.0, 11.0]}, {}, 100.0,
+            ["MXRF11"],
+            {"MXRF11": 0.0},
+            {"MXRF11": [10.0, 11.0]},
+            {},
+            100.0,
         )
 
 
@@ -456,13 +485,24 @@ def test_compare_benchmark_short_series():
 def test_format_metrics_report_basic():
     """format_metrics_report should produce a string with key sections."""
     metrics = PerformanceMetrics(
-        cagr=0.12, sharpe_ratio=1.5, sortino_ratio=2.0,
-        max_drawdown=-0.15, annual_volatility=0.18, total_return=0.36, num_months=24,
+        cagr=0.12,
+        sharpe_ratio=1.5,
+        sortino_ratio=2.0,
+        max_drawdown=-0.15,
+        annual_volatility=0.18,
+        total_return=0.36,
+        num_months=24,
     )
     result = BacktestResult(
-        ticker_list=["MXRF11"], start_date="2023-01-01", end_date="2024-12-31",
-        monthly_contribution=500.0, initial_value=1000.0, final_value=1360.0,
-        total_invested=13000.0, metrics=metrics, monthly_snapshots=[],
+        ticker_list=["MXRF11"],
+        start_date="2023-01-01",
+        end_date="2024-12-31",
+        monthly_contribution=500.0,
+        initial_value=1000.0,
+        final_value=1360.0,
+        total_invested=13000.0,
+        metrics=metrics,
+        monthly_snapshots=[],
     )
     report = format_metrics_report(result)
     assert "BACKTEST" in report
@@ -473,20 +513,35 @@ def test_format_metrics_report_basic():
 def test_format_metrics_report_with_comparison():
     """format_metrics_report with comparison should include benchmark section."""
     metrics = PerformanceMetrics(
-        cagr=0.12, sharpe_ratio=1.5, sortino_ratio=2.0,
-        max_drawdown=-0.15, annual_volatility=0.18, total_return=0.36, num_months=24,
+        cagr=0.12,
+        sharpe_ratio=1.5,
+        sortino_ratio=2.0,
+        max_drawdown=-0.15,
+        annual_volatility=0.18,
+        total_return=0.36,
+        num_months=24,
     )
     result = BacktestResult(
-        ticker_list=["MXRF11"], start_date="2023-01-01", end_date="2024-12-31",
-        monthly_contribution=500.0, initial_value=1000.0, final_value=1360.0,
-        total_invested=13000.0, metrics=metrics, monthly_snapshots=[],
+        ticker_list=["MXRF11"],
+        start_date="2023-01-01",
+        end_date="2024-12-31",
+        monthly_contribution=500.0,
+        initial_value=1000.0,
+        final_value=1360.0,
+        total_invested=13000.0,
+        metrics=metrics,
+        monthly_snapshots=[],
     )
     comparison = {
         "alpha": 0.05,
         "bateu_benchmark": True,
         "benchmark_ifix": {
-            "cagr": 0.07, "sharpe_ratio": 1.0, "sortino_ratio": 1.2,
-            "max_drawdown": -0.10, "annual_volatility": 0.12, "total_return": 0.20,
+            "cagr": 0.07,
+            "sharpe_ratio": 1.0,
+            "sortino_ratio": 1.2,
+            "max_drawdown": -0.10,
+            "annual_volatility": 0.12,
+            "total_return": 0.20,
             "valor_final": 1200.0,
         },
     }
@@ -498,6 +553,7 @@ def test_format_metrics_report_with_comparison():
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     """Executa todos os testes e reporta o resultado."""

@@ -184,13 +184,15 @@ def register_ai_tools(mcp: Any) -> None:
             dy = fund.get("dividend_yield", 0) * 100
             pvp = fund.get("pvp", 999)
 
-            scored.append({
-                "ticker": t,
-                "segment": sector_map.get(t, "Outros"),
-                "score": round(score, 0),
-                "dy": round(dy, 2),
-                "pvp": round(pvp, 2),
-            })
+            scored.append(
+                {
+                    "ticker": t,
+                    "segment": sector_map.get(t, "Outros"),
+                    "score": round(score, 0),
+                    "dy": round(dy, 2),
+                    "pvp": round(pvp, 2),
+                }
+            )
 
         scored.sort(key=lambda x: x["score"], reverse=True)
 

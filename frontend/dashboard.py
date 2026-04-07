@@ -1,3 +1,7 @@
+# DEPRECATED: This Streamlit dashboard has been replaced by the React frontend.
+# Run `python start.py` to use the new frontend (React + FastAPI).
+# This file is kept for reference only and will be removed in a future version.
+
 import os
 import sys
 import streamlit as st
@@ -57,31 +61,33 @@ from data.fundamentals_scraper import (
 import datetime as _dt
 import io
 import csv
-_today      = _dt.date.today()
+
+_today = _dt.date.today()
 _START_DATE = (_today.replace(year=_today.year - 3)).isoformat()
-_END_DATE   = _today.isoformat()
+_END_DATE = _today.isoformat()
 
 # Dark mode consistente para todos os gráficos matplotlib
 plt.style.use("dark_background")
-plt.rcParams.update({
-    "axes.facecolor":   "#0e1117",
-    "figure.facecolor": "#0e1117",
-    "axes.edgecolor":   "#444",
-    "grid.color":       "#333",
-    "text.color":       "#fafafa",
-    "axes.labelcolor":  "#fafafa",
-    "xtick.color":      "#aaa",
-    "ytick.color":      "#aaa",
-    "axes.titlecolor":  "#fafafa",
-})
+plt.rcParams.update(
+    {
+        "axes.facecolor": "#0e1117",
+        "figure.facecolor": "#0e1117",
+        "axes.edgecolor": "#444",
+        "grid.color": "#333",
+        "text.color": "#fafafa",
+        "axes.labelcolor": "#fafafa",
+        "xtick.color": "#aaa",
+        "ytick.color": "#aaa",
+        "axes.titlecolor": "#fafafa",
+    }
+)
 
 
 # ---- Cache helpers ---------------------------------------------------------
 @st.cache_data(ttl=3600, show_spinner=False)
 def _cached_returns(tickers_tuple: tuple, start: str, end: str, refresh: bool):
     """Retornos mensais com cache de 1h. refresh=True invalida o cache."""
-    returns, sources = load_returns_bulk(list(tickers_tuple), start, end,
-                                         force_refresh=refresh)
+    returns, sources = load_returns_bulk(list(tickers_tuple), start, end, force_refresh=refresh)
     return returns, sources
 
 
@@ -107,8 +113,7 @@ def _parse_portfolio_csv(content: bytes) -> list[dict]:
             continue
         try:
             qty = int(float(row.get("quantidade", row.get("Quantidade", 0))))
-            pm  = float(row.get("preco_medio", row.get("Preco_Medio",
-                        row.get("preco_atual", 10.0))))
+            pm = float(row.get("preco_medio", row.get("Preco_Medio", row.get("preco_atual", 10.0))))
         except (ValueError, TypeError):
             qty, pm = 100, 10.0
         rows.append({"ticker": ticker, "quantidade": qty, "preco_medio": pm})
@@ -146,9 +151,7 @@ st.sidebar.markdown(
     "\n[Baixar modelo CSV](data:text/csv;charset=utf-8,ticker%2Cquantidade%2Cpreco_medio%0AMXRF11%2C200%2C10.0%0AHGLG11%2C15%2C155.0)",
     unsafe_allow_html=False,
 )
-cart_file = st.sidebar.file_uploader(
-    "Upload CSV", type="csv", label_visibility="collapsed", key="csv_upload"
-)
+cart_file = st.sidebar.file_uploader("Upload CSV", type="csv", label_visibility="collapsed", key="csv_upload")
 
 if cart_file is not None:
     _parsed = _parse_portfolio_csv(cart_file.read())
@@ -188,8 +191,8 @@ _export_portfolio = st.session_state.get("portfolio_csv", [])
 if not _export_portfolio:
     _export_portfolio = [
         {"ticker": "MXRF11", "quantidade": 200, "preco_atual": 10.05, "dividend_mensal": 0.09},
-        {"ticker": "HGLG11", "quantidade": 15,  "preco_atual": 155.0, "dividend_mensal": 1.10},
-        {"ticker": "XPML11", "quantidade": 100, "preco_atual": 90.0,  "dividend_mensal": 0.65},
+        {"ticker": "HGLG11", "quantidade": 15, "preco_atual": 155.0, "dividend_mensal": 1.10},
+        {"ticker": "XPML11", "quantidade": 100, "preco_atual": 90.0, "dividend_mensal": 0.65},
     ]
 
 _csv_bytes = generate_portfolio_csv_download(_export_portfolio)
@@ -221,15 +224,17 @@ st.sidebar.caption("AlphaCota v2 · Fases 1-2.8 ✅")
 # ---------------------------------------------------------------------------
 # Abas principais
 # ---------------------------------------------------------------------------
-tab_pipeline, tab_projecao, tab_backtest, tab_risco, tab_markowitz, tab_stress, tab_avancado = st.tabs([
-    "🤖 Análise Completa",
-    "📈 Projeção Futura (Monte Carlo)",
-    "🔬 Evidência Histórica (Backtest)",
-    "🛡️ Risco & Correlação",
-    "🔷 Markowitz — Fronteira Eficiente",
-    "⚡ Stress Testing",
-    "🧬 Análise Avançada",
-])
+tab_pipeline, tab_projecao, tab_backtest, tab_risco, tab_markowitz, tab_stress, tab_avancado = st.tabs(
+    [
+        "🤖 Análise Completa",
+        "📈 Projeção Futura (Monte Carlo)",
+        "🔬 Evidência Histórica (Backtest)",
+        "🛡️ Risco & Correlação",
+        "🔷 Markowitz — Fronteira Eficiente",
+        "⚡ Stress Testing",
+        "🧬 Análise Avançada",
+    ]
+)
 
 
 # ===========================================================================
@@ -263,7 +268,10 @@ with tab_pipeline:
     with pp_col3:
         pp_score_threshold = st.slider(
             "Score Mínimo (Alpha Score)",
-            1.0, 9.0, 5.0, step=0.5,
+            1.0,
+            9.0,
+            5.0,
+            step=0.5,
             key="pp_threshold",
         )
 
@@ -283,7 +291,9 @@ with tab_pipeline:
             sectors=pp_sectors if pp_sectors else None,
         )
 
-    st.caption(f"📊 Universo: **{len(pp_tickers)} FIIs** · Perfil: **{perfil_selecionado}** · Threshold: **{pp_score_threshold}**")
+    st.caption(
+        f"📊 Universo: **{len(pp_tickers)} FIIs** · Perfil: **{perfil_selecionado}** · Threshold: **{pp_score_threshold}**"
+    )
 
     # ── Indicadores de status ──
     i1, i2, i3 = st.columns(3)
@@ -312,25 +322,30 @@ with tab_pipeline:
         for ticker in pp_tickers:
             f = fundamentals.get(ticker, {})
             price, _ = load_last_price(ticker) if BRIDGE_HAS_YFINANCE else (10.0, "fallback")
-            assets_data.append({
-                "ticker": ticker,
-                "classe": "FII",  # Classe para o profile_allocator (ETF/ACAO/FII)
-                "setor": BRIDGE_SECTOR_MAP.get(ticker, "Outros"),  # Setor para display
-                "preco_atual": price,
-                "dividend_yield": f.get("dividend_yield", 0.08),
-                "dividend_consistency": f.get("dividend_consistency", 7.0),
-                "pvp": f.get("pvp", 1.0),
-                "debt_ratio": f.get("debt_ratio", 0.3),
-                "vacancy_rate": f.get("vacancy_rate", 0.05),
-                "revenue_growth_12m": f.get("revenue_growth_12m", 0.0),
-                "earnings_growth_12m": f.get("earnings_growth_12m", 0.0),
-                # Altman Z — campos para quant_engine
-                "working_capital": 1000, "total_assets": 5000,
-                "retained_earnings": 800, "ebit": 400,
-                "market_value_equity": 3000, "total_liabilities": 1500,
-                "revenue": 1200,
-                "_data_source": f.get("_source", "default"),
-            })
+            assets_data.append(
+                {
+                    "ticker": ticker,
+                    "classe": "FII",  # Classe para o profile_allocator (ETF/ACAO/FII)
+                    "setor": BRIDGE_SECTOR_MAP.get(ticker, "Outros"),  # Setor para display
+                    "preco_atual": price,
+                    "dividend_yield": f.get("dividend_yield", 0.08),
+                    "dividend_consistency": f.get("dividend_consistency", 7.0),
+                    "pvp": f.get("pvp", 1.0),
+                    "debt_ratio": f.get("debt_ratio", 0.3),
+                    "vacancy_rate": f.get("vacancy_rate", 0.05),
+                    "revenue_growth_12m": f.get("revenue_growth_12m", 0.0),
+                    "earnings_growth_12m": f.get("earnings_growth_12m", 0.0),
+                    # Altman Z — campos para quant_engine
+                    "working_capital": 1000,
+                    "total_assets": 5000,
+                    "retained_earnings": 800,
+                    "ebit": 400,
+                    "market_value_equity": 3000,
+                    "total_liabilities": 1500,
+                    "revenue": 1200,
+                    "_data_source": f.get("_source", "default"),
+                }
+            )
 
         # Fontes de dados
         sources_count = {}
@@ -344,11 +359,14 @@ with tab_pipeline:
         # STEP 2 — Rodar pipeline
         with st.spinner("⚙️ Rodando pipeline quantamental..."):
             import sqlite3
+
             conn = sqlite3.connect("alphacota.db")
             from core.state_repository import init_db as init_state_db
+
             init_state_db(conn)
 
             from services.allocation_pipeline import run_allocation_pipeline
+
             pipeline_result = run_allocation_pipeline(
                 connection=conn,
                 user_profile=perfil_selecionado,
@@ -362,10 +380,7 @@ with tab_pipeline:
 
         if "error" in pipeline_result:
             st.error(f"❌ {pipeline_result['error']}")
-            st.info(
-                "Tente reduzir o **Score Mínimo** na configuração acima, "
-                "ou ampliar os setores do universo."
-            )
+            st.info("Tente reduzir o **Score Mínimo** na configuração acima, " "ou ampliar os setores do universo.")
         else:
             st.success("✅ Pipeline concluído com sucesso!")
 
@@ -378,7 +393,14 @@ with tab_pipeline:
             pc1.metric("📊 Ativos Selecionados", f"{len(alloc)} de {len(pp_tickers)}")
             pc2.metric("📈 Retorno Esperado", f"{risk['expected_return']*100:.1f}% a.a.")
             pc3.metric("🎯 Mediana Monte Carlo", f"R$ {risk['median_projection']:,.0f}")
-            pc4.metric("🔥 FIRE", f"{fire['years_to_fire']} anos" if not isinstance(fire['years_to_fire'], str) else fire['years_to_fire'])
+            pc4.metric(
+                "🔥 FIRE",
+                (
+                    f"{fire['years_to_fire']} anos"
+                    if not isinstance(fire["years_to_fire"], str)
+                    else fire["years_to_fire"]
+                ),
+            )
 
             st.markdown("---")
 
@@ -387,12 +409,14 @@ with tab_pipeline:
             alloc_data = []
             for ticker, weight in sorted(alloc.items(), key=lambda x: x[1], reverse=True):
                 setor = BRIDGE_SECTOR_MAP.get(ticker, "—")
-                alloc_data.append({
-                    "Ticker": ticker,
-                    "Setor": setor,
-                    "Peso (%)": f"{weight*100:.2f}%",
-                    "Peso": weight,
-                })
+                alloc_data.append(
+                    {
+                        "Ticker": ticker,
+                        "Setor": setor,
+                        "Peso (%)": f"{weight*100:.2f}%",
+                        "Peso": weight,
+                    }
+                )
 
             df_alloc = pd.DataFrame(alloc_data)
 
@@ -403,13 +427,12 @@ with tab_pipeline:
             with al2:
                 fig_alloc, ax_alloc = plt.subplots(figsize=(5, 4))
                 top_n = df_alloc.head(8)
-                colors_alloc = ["#4CAF50", "#2196F3", "#FF9800", "#9C27B0", "#F44336",
-                                "#607D8B", "#00BCD4", "#FFC107"]
+                colors_alloc = ["#4CAF50", "#2196F3", "#FF9800", "#9C27B0", "#F44336", "#607D8B", "#00BCD4", "#FFC107"]
                 ax_alloc.pie(
                     top_n["Peso"],
                     labels=top_n["Ticker"],
                     autopct="%1.1f%%",
-                    colors=colors_alloc[:len(top_n)],
+                    colors=colors_alloc[: len(top_n)],
                     startangle=90,
                 )
                 ax_alloc.set_title(f"Alocação — {perfil_selecionado.title()}")
@@ -478,8 +501,7 @@ with tab_projecao:
 
     col_param1, col_param2 = st.columns([2, 1])
     with col_param1:
-        meses_simulacao = st.slider("Horizonte de Investimento (meses)", 12, 240, 60, step=12,
-                                     format="%d meses")
+        meses_simulacao = st.slider("Horizonte de Investimento (meses)", 12, 240, 60, step=12, format="%d meses")
     with col_param2:
         with st.expander("⚙️ Avançado"):
             simulacoes = st.number_input("Caminhos Simulados", value=500, step=100, min_value=100)
@@ -487,20 +509,20 @@ with tab_projecao:
     target_allocation = getTargetAllocation(perfil_selecionado)
 
     portfolio_inicial = [
-        {'ticker': 'IVVB11', 'classe': 'ETF',  'quantidade': 10,  'preco_atual': 250.0},
-        {'ticker': 'BBSE3',  'classe': 'ACAO',  'quantidade': 50,  'preco_atual': 30.0},
-        {'ticker': 'MXRF11', 'classe': 'FII',   'quantidade': 100, 'preco_atual': 10.0},
+        {"ticker": "IVVB11", "classe": "ETF", "quantidade": 10, "preco_atual": 250.0},
+        {"ticker": "BBSE3", "classe": "ACAO", "quantidade": 50, "preco_atual": 30.0},
+        {"ticker": "MXRF11", "classe": "FII", "quantidade": 100, "preco_atual": 10.0},
     ]
     asset_universe = [
-        {'ticker': 'IVVB11', 'classe': 'ETF',  'ativo': True, 'preco_atual': 250.0},
-        {'ticker': 'BNDX11', 'classe': 'ETF',  'ativo': True, 'preco_atual': 100.0},
-        {'ticker': 'BBSE3',  'classe': 'ACAO', 'ativo': True, 'preco_atual': 30.0},
-        {'ticker': 'WEGE3',  'classe': 'ACAO', 'ativo': True, 'preco_atual': 40.0},
-        {'ticker': 'MXRF11', 'classe': 'FII',  'ativo': True, 'preco_atual': 10.0},
-        {'ticker': 'HGLG11', 'classe': 'FII',  'ativo': True, 'preco_atual': 160.0},
+        {"ticker": "IVVB11", "classe": "ETF", "ativo": True, "preco_atual": 250.0},
+        {"ticker": "BNDX11", "classe": "ETF", "ativo": True, "preco_atual": 100.0},
+        {"ticker": "BBSE3", "classe": "ACAO", "ativo": True, "preco_atual": 30.0},
+        {"ticker": "WEGE3", "classe": "ACAO", "ativo": True, "preco_atual": 40.0},
+        {"ticker": "MXRF11", "classe": "FII", "ativo": True, "preco_atual": 10.0},
+        {"ticker": "HGLG11", "classe": "FII", "ativo": True, "preco_atual": 160.0},
     ]
-    growth_rates  = {"ETF": 0.08, "ACAO": 0.12, "FII": 0.06}
-    volatilities  = {"ETF": 0.15, "ACAO": 0.30, "FII": 0.10}
+    growth_rates = {"ETF": 0.08, "ACAO": 0.12, "FII": 0.06}
+    volatilities = {"ETF": 0.15, "ACAO": 0.30, "FII": 0.10}
 
     if st.button("🚀 Projetar Meu Futuro", type="primary", key="btn_monte"):
         with st.spinner("Simulando centenas de futuros possíveis..."):
@@ -515,21 +537,24 @@ with tab_projecao:
                 simulacoes=int(simulacoes),
             )
 
-        mediana_vf   = resultado["mediana_valor_final"]
-        p10          = resultado["percentil_10"]
-        p90          = resultado["percentil_90"]
+        mediana_vf = resultado["mediana_valor_final"]
+        p10 = resultado["percentil_10"]
+        p90 = resultado["percentil_90"]
         prob_prejuizo = resultado["probabilidade_prejuizo"]
-        dd_medio     = resultado["drawdown_medio"]
-        cagr_medio   = resultado["retorno_anualizado_medio"]
+        dd_medio = resultado["drawdown_medio"]
+        cagr_medio = resultado["retorno_anualizado_medio"]
 
-        valor_inicial   = sum(a["quantidade"] * a.get("preco_atual", 0) for a in portfolio_inicial)
+        valor_inicial = sum(a["quantidade"] * a.get("preco_atual", 0) for a in portfolio_inicial)
         total_investido = valor_inicial + (aporte_mensal * meses_simulacao)
-        prob_lucro      = 1.0 - prob_prejuizo
+        prob_lucro = 1.0 - prob_prejuizo
 
         st.success("Projeção concluída!")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("🎯 Patrimônio Mediano", f"R$ {mediana_vf:,.0f}",
-                  delta=f"+{((mediana_vf/total_investido)-1)*100:.0f}% sobre aportes")
+        c1.metric(
+            "🎯 Patrimônio Mediano",
+            f"R$ {mediana_vf:,.0f}",
+            delta=f"+{((mediana_vf/total_investido)-1)*100:.0f}% sobre aportes",
+        )
         c2.metric("📈 CAGR Médio", f"{cagr_medio*100:.1f}% a.a.")
         c3.metric("📉 Drawdown Médio", f"-{dd_medio*100:.1f}%")
         c4.metric("✅ Prob. de Lucro", f"{prob_lucro*100:.1f}%")
@@ -563,13 +588,16 @@ with tab_projecao:
 
         with col_g2:
             st.markdown("**Risco × Retorno (cada ponto = 1 simulação)**")
-            df_scatter = pd.DataFrame({
-                "Volatilidade a.a. (%)": [v * 100 for v in volatilidades_lista],
-                "CAGR (%)": [c * 100 for c in cagrs_lista],
-            })
+            df_scatter = pd.DataFrame(
+                {
+                    "Volatilidade a.a. (%)": [v * 100 for v in volatilidades_lista],
+                    "CAGR (%)": [c * 100 for c in cagrs_lista],
+                }
+            )
             fig2, ax2 = plt.subplots(figsize=(8, 4))
-            sns.scatterplot(data=df_scatter, x="Volatilidade a.a. (%)", y="CAGR (%)",
-                            alpha=0.3, color="#9C27B0", ax=ax2)
+            sns.scatterplot(
+                data=df_scatter, x="Volatilidade a.a. (%)", y="CAGR (%)", alpha=0.3, color="#9C27B0", ax=ax2
+            )
             ax2.axhline(0, color="red", linewidth=0.8, linestyle="--")
             st.pyplot(fig2)
 
@@ -633,6 +661,7 @@ with tab_backtest:
             def _gen_prices(base: float, n: int, mu: float, sigma: float, seed: int) -> list[float]:
                 """Série de preços com retorno esperado mu e volatilidade sigma."""
                 import random
+
                 random.seed(seed)
                 prices = [base]
                 for _ in range(n - 1):
@@ -641,9 +670,9 @@ with tab_backtest:
                 return prices
 
             price_series = {
-                "MXRF11": _gen_prices(9.80,  bt_meses, 0.007, 0.03, seed=42),
+                "MXRF11": _gen_prices(9.80, bt_meses, 0.007, 0.03, seed=42),
                 "HGLG11": _gen_prices(155.0, bt_meses, 0.008, 0.04, seed=43),
-                "KNCR11": _gen_prices(97.0,  bt_meses, 0.006, 0.025, seed=44),
+                "KNCR11": _gen_prices(97.0, bt_meses, 0.006, 0.025, seed=44),
             }
             dividend_series = {
                 "MXRF11": [0.085 * price_series["MXRF11"][i] / 12 for i in range(bt_meses)],
@@ -666,11 +695,9 @@ with tab_backtest:
                     rebalance_frequency=bt_rebalance,
                 )
                 result.start_date = "demo"
-                result.end_date   = "demo"
+                result.end_date = "demo"
 
-                comparison = compare_against_benchmark(
-                    result, benchmark_prices, aporte_mensal, bt_capital
-                )
+                comparison = compare_against_benchmark(result, benchmark_prices, aporte_mensal, bt_capital)
 
             except Exception as e:
                 st.error(f"Erro ao rodar backtest: {e}")
@@ -684,15 +711,18 @@ with tab_backtest:
         alpha = comparison.get("alpha", 0.0)
 
         mc1, mc2, mc3, mc4, mc5 = st.columns(5)
-        mc1.metric("💰 Valor Final",    f"R$ {result.final_value:,.0f}",
-                   delta=f"Investido: R$ {result.total_invested:,.0f}")
-        mc2.metric("📈 CAGR",           f"{m.cagr*100:.2f}% a.a.",
-                   delta=f"IFIX: {bm.get('cagr',0)*100:.2f}%")
-        mc3.metric("⚡ Sharpe",         f"{m.sharpe_ratio:.2f}")
-        mc4.metric("📉 Max Drawdown",   f"{m.max_drawdown*100:.2f}%")
-        mc5.metric("🎯 Alpha vs IFIX",  f"{alpha*100:+.2f}% a.a.",
-                   delta="✅ Bateu" if comparison.get("bateu_benchmark") else "❌ Perdeu",
-                   delta_color="normal" if comparison.get("bateu_benchmark") else "inverse")
+        mc1.metric(
+            "💰 Valor Final", f"R$ {result.final_value:,.0f}", delta=f"Investido: R$ {result.total_invested:,.0f}"
+        )
+        mc2.metric("📈 CAGR", f"{m.cagr*100:.2f}% a.a.", delta=f"IFIX: {bm.get('cagr',0)*100:.2f}%")
+        mc3.metric("⚡ Sharpe", f"{m.sharpe_ratio:.2f}")
+        mc4.metric("📉 Max Drawdown", f"{m.max_drawdown*100:.2f}%")
+        mc5.metric(
+            "🎯 Alpha vs IFIX",
+            f"{alpha*100:+.2f}% a.a.",
+            delta="✅ Bateu" if comparison.get("bateu_benchmark") else "❌ Perdeu",
+            delta_color="normal" if comparison.get("bateu_benchmark") else "inverse",
+        )
 
         st.markdown("---")
 
@@ -711,15 +741,24 @@ with tab_backtest:
 
         fig3, ax3 = plt.subplots(figsize=(12, 5))
         ax3.plot(meses_labels, valores, color="#4CAF50", linewidth=2.5, label="Carteira AlphaCota")
-        ax3.plot(meses_labels, bm_values[:len(meses_labels)],
-                 color="#FF9800", linewidth=1.8, linestyle="--", label="Benchmark (IBOV)")
+        ax3.plot(
+            meses_labels,
+            bm_values[: len(meses_labels)],
+            color="#FF9800",
+            linewidth=1.8,
+            linestyle="--",
+            label="Benchmark (IBOV)",
+        )
 
         # Marcar meses de rebalanceamento
         rebalance_months = [s["month"] - 1 for s in snapshots if s.get("rebalanced")]
         ax3.scatter(
             [meses_labels[i] for i in rebalance_months],
             [valores[i] for i in rebalance_months],
-            color="#2196F3", zorder=5, s=50, label="Rebalanceamento"
+            color="#2196F3",
+            zorder=5,
+            s=50,
+            label="Rebalanceamento",
         )
 
         ax3.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f"R$ {x:,.0f}"))
@@ -736,25 +775,34 @@ with tab_backtest:
 
         # --- Tabela de métricas comparativas ---
         st.subheader("Métricas Comparativas")
-        df_compare = pd.DataFrame({
-            "Métrica": ["CAGR (a.a.)", "Sharpe Ratio", "Sortino Ratio", "Max Drawdown", "Volatilidade a.a.", "Valor Final"],
-            "Carteira AlphaCota": [
-                f"{m.cagr*100:.2f}%",
-                f"{m.sharpe_ratio:.3f}",
-                f"{m.sortino_ratio:.3f}",
-                f"{m.max_drawdown*100:.2f}%",
-                f"{m.annual_volatility*100:.2f}%",
-                f"R$ {result.final_value:,.2f}",
-            ],
-            "Benchmark (IBOV)": [
-                f"{bm.get('cagr', 0)*100:.2f}%",
-                f"{bm.get('sharpe_ratio', 0):.3f}",
-                f"{bm.get('sortino_ratio', 0):.3f}",
-                f"{bm.get('max_drawdown', 0)*100:.2f}%",
-                f"{bm.get('annual_volatility', 0)*100:.2f}%",
-                f"R$ {bm.get('valor_final', 0):,.2f}",
-            ],
-        })
+        df_compare = pd.DataFrame(
+            {
+                "Métrica": [
+                    "CAGR (a.a.)",
+                    "Sharpe Ratio",
+                    "Sortino Ratio",
+                    "Max Drawdown",
+                    "Volatilidade a.a.",
+                    "Valor Final",
+                ],
+                "Carteira AlphaCota": [
+                    f"{m.cagr*100:.2f}%",
+                    f"{m.sharpe_ratio:.3f}",
+                    f"{m.sortino_ratio:.3f}",
+                    f"{m.max_drawdown*100:.2f}%",
+                    f"{m.annual_volatility*100:.2f}%",
+                    f"R$ {result.final_value:,.2f}",
+                ],
+                "Benchmark (IBOV)": [
+                    f"{bm.get('cagr', 0)*100:.2f}%",
+                    f"{bm.get('sharpe_ratio', 0):.3f}",
+                    f"{bm.get('sortino_ratio', 0):.3f}",
+                    f"{bm.get('max_drawdown', 0)*100:.2f}%",
+                    f"{bm.get('annual_volatility', 0)*100:.2f}%",
+                    f"R$ {bm.get('valor_final', 0):,.2f}",
+                ],
+            }
+        )
         st.dataframe(df_compare, use_container_width=True, hide_index=True)
 
         # --- Relatório textual completo ---
@@ -802,7 +850,6 @@ with tab_risco:
         "e o risco sistêmico. **Alta correlação = diversificação falsa.**"
     )
 
-
     st.markdown("---")
     st.subheader("Configurar Carteira para Análise")
     rc1, rc2 = st.columns([2, 1])
@@ -814,8 +861,12 @@ with tab_risco:
         )
     with rc2:
         corr_threshold = st.slider(
-            "Limiar de Alta Correlação", 0.50, 0.95, 0.75, step=0.05,
-            help="Correlações acima deste valor serão destacadas como risco."
+            "Limiar de Alta Correlação",
+            0.50,
+            0.95,
+            0.75,
+            step=0.05,
+            help="Correlações acima deste valor serão destacadas como risco.",
         )
 
     tickers_raw = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
@@ -847,23 +898,22 @@ with tab_risco:
         n_real = sum(1 for s in sources_corr.values() if s == "real")
         data_badge = (
             f"🟢 {n_real}/{len(tickers_raw)} tickers com dados reais (yfinance)"
-            if BRIDGE_HAS_YFINANCE else
-            "🟡 Usando dados sintéticos (yfinance não instalado)"
+            if BRIDGE_HAS_YFINANCE
+            else "🟡 Usando dados sintéticos (yfinance não instalado)"
         )
         st.info(data_badge)
 
         # ── Métricas principais ──
         st.success("Análise concluída!")
         am1, am2, am3 = st.columns(3)
-        am1.metric("📊 Volatilidade Anual do Portfólio",
-                   f"{analysis['portfolio_annual_volatility']*100:.2f}%")
-        am2.metric("🔀 Diversification Ratio",
-                   f"{analysis['diversification_ratio']:.2f}",
-                   delta="Bom" if analysis['diversification_ratio'] > 1.2 else "Baixo",
-                   delta_color="normal" if analysis['diversification_ratio'] > 1.2 else "inverse")
-        am3.metric("🏗️ Concentração (HHI)",
-                   f"{analysis['herfindahl_index']:.2f}",
-                   delta=analysis['concentration_risk'])
+        am1.metric("📊 Volatilidade Anual do Portfólio", f"{analysis['portfolio_annual_volatility']*100:.2f}%")
+        am2.metric(
+            "🔀 Diversification Ratio",
+            f"{analysis['diversification_ratio']:.2f}",
+            delta="Bom" if analysis["diversification_ratio"] > 1.2 else "Baixo",
+            delta_color="normal" if analysis["diversification_ratio"] > 1.2 else "inverse",
+        )
+        am3.metric("🏗️ Concentração (HHI)", f"{analysis['herfindahl_index']:.2f}", delta=analysis["concentration_risk"])
 
         # ── Alertas ──
         if analysis["warnings"]:
@@ -885,12 +935,20 @@ with tab_risco:
                 index=tickers_in_matrix,
                 columns=tickers_in_matrix,
             )
-            fig_h, ax_h = plt.subplots(figsize=(max(5, len(tickers_in_matrix) * 1.2),
-                                                max(4, len(tickers_in_matrix) * 1.0)))
+            fig_h, ax_h = plt.subplots(
+                figsize=(max(5, len(tickers_in_matrix) * 1.2), max(4, len(tickers_in_matrix) * 1.0))
+            )
             sns.heatmap(
-                df_corr, annot=True, fmt=".2f", cmap="RdYlGn_r",
-                center=0, vmin=-1, vmax=1, square=True,
-                linewidths=0.5, ax=ax_h,
+                df_corr,
+                annot=True,
+                fmt=".2f",
+                cmap="RdYlGn_r",
+                center=0,
+                vmin=-1,
+                vmax=1,
+                square=True,
+                linewidths=0.5,
+                ax=ax_h,
                 cbar_kws={"shrink": 0.8},
             )
             ax_h.set_title("Correlação de Pearson (36 meses)", fontsize=11)
@@ -902,17 +960,19 @@ with tab_risco:
             st.subheader("Concentração Setorial")
             sector_data = analysis["sector_concentration"]
             if sector_data:
-                df_sector = pd.DataFrame({
-                    "Setor": list(sector_data.keys()),
-                    "Alocação (%)": [v * 100 for v in sector_data.values()],
-                })
+                df_sector = pd.DataFrame(
+                    {
+                        "Setor": list(sector_data.keys()),
+                        "Alocação (%)": [v * 100 for v in sector_data.values()],
+                    }
+                )
                 fig_s, ax_s = plt.subplots(figsize=(5, 4))
                 colors = ["#4CAF50", "#2196F3", "#FF9800", "#9C27B0", "#F44336", "#607D8B"]
                 ax_s.pie(
                     df_sector["Alocação (%)"],
                     labels=df_sector["Setor"],
                     autopct="%1.1f%%",
-                    colors=colors[:len(df_sector)],
+                    colors=colors[: len(df_sector)],
                     startangle=90,
                 )
                 ax_s.set_title(f"HHI: {analysis['herfindahl_index']:.2f} ({analysis['concentration_risk']})")
@@ -923,10 +983,14 @@ with tab_risco:
             st.markdown("---")
             st.subheader(f"🔴 Pares com Correlação > {corr_threshold}")
             df_pairs = pd.DataFrame(analysis["high_correlation_pairs"])
-            df_pairs = df_pairs.rename(columns={
-                "ticker_a": "Ativo A", "ticker_b": "Ativo B",
-                "correlation": "Correlação", "classification": "Classificação"
-            })
+            df_pairs = df_pairs.rename(
+                columns={
+                    "ticker_a": "Ativo A",
+                    "ticker_b": "Ativo B",
+                    "correlation": "Correlação",
+                    "classification": "Classificação",
+                }
+            )
             st.dataframe(df_pairs, use_container_width=True, hide_index=True)
             st.info(
                 "💡 Pares com alta correlação se movem juntos. "
@@ -993,9 +1057,7 @@ with tab_markowitz:
 
     if st.button("⚙️ Otimizar Carteira", type="primary", key="btn_markowitz"):
         with st.spinner(f"Buscando dados e simulando {mk_n_sim:,} portfólios..."):
-            mk_return_series, mk_sources = _cached_returns(
-                tuple(mk_tickers), _START_DATE, _END_DATE, _force_refresh
-            )
+            mk_return_series, mk_sources = _cached_returns(tuple(mk_tickers), _START_DATE, _END_DATE, _force_refresh)
             mk_corr_matrix = build_correlation_matrix(mk_tickers, mk_return_series)
 
             result = compare_strategies(
@@ -1012,44 +1074,55 @@ with tab_markowitz:
         # Badge de qualidade de dados
         n_real_mk = sum(1 for s in mk_sources.values() if s == "real")
         st.info(
-            f"🟢 {n_real_mk}/{len(mk_tickers)} tickers com dados reais" if BRIDGE_HAS_YFINANCE
+            f"🟢 {n_real_mk}/{len(mk_tickers)} tickers com dados reais"
+            if BRIDGE_HAS_YFINANCE
             else "🟡 Usando dados sintéticos (yfinance não instalado)"
         )
 
         frontier = result["frontier"]
-        ms  = result["max_sharpe"]
-        mv  = result["min_volatility"]
-        ew  = result["equal_weight"]
+        ms = result["max_sharpe"]
+        mv = result["min_volatility"]
+        ew = result["equal_weight"]
 
         st.success(f"Otimização concluída! {len(frontier):,} portfólios avaliados.")
 
         # ── Métricas top ──
         met1, met2, met3 = st.columns(3)
-        met1.metric("🥇 Max Sharpe",
-                    f"Sharpe {ms['sharpe']:.3f}",
-                    delta=f"Ret {ms['return']*100:.2f}% | Vol {ms['volatility']*100:.2f}%")
-        met2.metric("🛡️ Min Volatility",
-                    f"Vol {mv['volatility']*100:.2f}%",
-                    delta=f"Ret {mv['return']*100:.2f}% | Sharpe {mv['sharpe']:.3f}")
-        met3.metric("⚖️ Equal Weight (base)",
-                    f"Sharpe {ew['sharpe']:.3f}",
-                    delta=f"Ret {ew['return']*100:.2f}% | Vol {ew['volatility']*100:.2f}%",
-                    delta_color="off")
+        met1.metric(
+            "🥇 Max Sharpe",
+            f"Sharpe {ms['sharpe']:.3f}",
+            delta=f"Ret {ms['return']*100:.2f}% | Vol {ms['volatility']*100:.2f}%",
+        )
+        met2.metric(
+            "🛡️ Min Volatility",
+            f"Vol {mv['volatility']*100:.2f}%",
+            delta=f"Ret {mv['return']*100:.2f}% | Sharpe {mv['sharpe']:.3f}",
+        )
+        met3.metric(
+            "⚖️ Equal Weight (base)",
+            f"Sharpe {ew['sharpe']:.3f}",
+            delta=f"Ret {ew['return']*100:.2f}% | Vol {ew['volatility']*100:.2f}%",
+            delta_color="off",
+        )
 
         st.markdown("---")
 
         # ── Scatter — Fronteira Eficiente ──
         st.subheader("Nuvem de Portfólios — Fronteira de Eficiência")
 
-        vols_all    = [p["volatility"] * 100 for p in frontier]
-        rets_all    = [p["return"]     * 100 for p in frontier]
-        sharpes_all = [p["sharpe"]           for p in frontier]
+        vols_all = [p["volatility"] * 100 for p in frontier]
+        rets_all = [p["return"] * 100 for p in frontier]
+        sharpes_all = [p["sharpe"] for p in frontier]
 
         fig_mk, ax_mk = plt.subplots(figsize=(12, 6))
         sc = ax_mk.scatter(
-            vols_all, rets_all,
-            c=sharpes_all, cmap="RdYlGn",
-            alpha=0.45, s=12, zorder=2,
+            vols_all,
+            rets_all,
+            c=sharpes_all,
+            cmap="RdYlGn",
+            alpha=0.45,
+            s=12,
+            zorder=2,
         )
         plt.colorbar(sc, ax=ax_mk, label="Sharpe Ratio")
 
@@ -1060,9 +1133,15 @@ with tab_markowitz:
             (ew, "#E65100", "P", f"Equal Weight ({ew['sharpe']:.2f})"),
         ]:
             ax_mk.scatter(
-                p["volatility"] * 100, p["return"] * 100,
-                color=color, marker=marker, s=250, zorder=5, label=label,
-                edgecolors="white", linewidths=0.8,
+                p["volatility"] * 100,
+                p["return"] * 100,
+                color=color,
+                marker=marker,
+                s=250,
+                zorder=5,
+                label=label,
+                edgecolors="white",
+                linewidths=0.8,
             )
 
         ax_mk.set_xlabel("Volatilidade Anual (%)")
@@ -1077,12 +1156,14 @@ with tab_markowitz:
 
         # ── Tabela comparativa ──
         st.subheader("Comparação das Estratégias")
-        df_strat = pd.DataFrame({
-            "Estratégia": ["Max Sharpe", "Min Volatility", "Equal Weight"],
-            "Retorno a.a.": [f"{p['return']*100:.2f}%" for p in [ms, mv, ew]],
-            "Volatilidade a.a.": [f"{p['volatility']*100:.2f}%" for p in [ms, mv, ew]],
-            "Sharpe Ratio": [f"{p['sharpe']:.3f}" for p in [ms, mv, ew]],
-        })
+        df_strat = pd.DataFrame(
+            {
+                "Estratégia": ["Max Sharpe", "Min Volatility", "Equal Weight"],
+                "Retorno a.a.": [f"{p['return']*100:.2f}%" for p in [ms, mv, ew]],
+                "Volatilidade a.a.": [f"{p['volatility']*100:.2f}%" for p in [ms, mv, ew]],
+                "Sharpe Ratio": [f"{p['sharpe']:.3f}" for p in [ms, mv, ew]],
+            }
+        )
         st.dataframe(df_strat, use_container_width=True, hide_index=True)
 
         # ── Pesos por estratégia ──
@@ -1093,10 +1174,9 @@ with tab_markowitz:
         def _pie_chart(strategy: dict, title: str, ax_target):
             weights = strategy.get("weights", {})
             labels = list(weights.keys())
-            sizes  = [weights[t] * 100 for t in labels]
+            sizes = [weights[t] * 100 for t in labels]
             colors = ["#4CAF50", "#2196F3", "#FF9800", "#9C27B0", "#F44336", "#607D8B"]
-            ax_target.pie(sizes, labels=labels, autopct="%1.1f%%",
-                          colors=colors[:len(labels)], startangle=90)
+            ax_target.pie(sizes, labels=labels, autopct="%1.1f%%", colors=colors[: len(labels)], startangle=90)
             ax_target.set_title(title, fontsize=9)
 
         fig_pw, axes = plt.subplots(1, 3, figsize=(12, 4))
@@ -1169,16 +1249,14 @@ with tab_stress:
         selected_key = scenario_options[selected_name]
         st.caption(STRESS_SCENARIOS[selected_key]["description"])
     with sc2:
-        run_all = st.checkbox("Rodar Todos os Cenários", value=False,
-                              help="Compara todos os cenários em um ranking.")
+        run_all = st.checkbox("Rodar Todos os Cenários", value=False, help="Compara todos os cenários em um ranking.")
 
     if st.button("🔴 Aplicar Stress", type="primary", key="btn_stress"):
         with st.spinner("Buscando preços reais e aplicando cenário de stress..."):
-            portfolio_stress = build_portfolio_from_tickers(
-                stress_ticker_list, STRESS_QUANTITIES
-            )
+            portfolio_stress = build_portfolio_from_tickers(stress_ticker_list, STRESS_QUANTITIES)
             badge_stress = (
-                f"🟢 Preços e dividendos reais via yfinance" if BRIDGE_HAS_YFINANCE
+                f"🟢 Preços e dividendos reais via yfinance"
+                if BRIDGE_HAS_YFINANCE
                 else "🟡 Usando preços e dividendos de fallback (yfinance não instalado)"
             )
 
@@ -1195,11 +1273,14 @@ with tab_stress:
             st.success(f"Suite completa: {summary['n_scenarios']} cenários analisados.")
 
             s1, s2, s3 = st.columns(3)
-            s1.metric("💀 Pior Cenário", summary["worst_scenario"],
-                      delta=f"{summary['worst_drawdown']*100:.1f}%", delta_color="inverse")
+            s1.metric(
+                "💀 Pior Cenário",
+                summary["worst_scenario"],
+                delta=f"{summary['worst_drawdown']*100:.1f}%",
+                delta_color="inverse",
+            )
             s2.metric("📊 Drawdown Médio", f"{summary['avg_drawdown']*100:.1f}%")
-            s3.metric("💰 Corte Médio de DY", f"{summary['avg_div_cut']*100:.1f}%",
-                      delta_color="inverse")
+            s3.metric("💰 Corte Médio de DY", f"{summary['avg_div_cut']*100:.1f}%", delta_color="inverse")
 
             st.markdown("---")
             st.subheader("Ranking de Cenários (do mais severo ao mais leve)")
@@ -1215,7 +1296,7 @@ with tab_stress:
             bar_data = [(r["scenario"], r["drawdown"] * 100) for r in summary["ranking"]]
             bar_data.sort(key=lambda x: x[1])
             names = [b[0].replace(" (", "\n(") for b in bar_data]
-            vals  = [b[1] for b in bar_data]
+            vals = [b[1] for b in bar_data]
             colors = ["#F44336" if v < -15 else "#FF9800" if v < -8 else "#FFC107" for v in vals]
             ax_suite.barh(names, vals, color=colors)
             ax_suite.axvline(0, color="white", linewidth=0.8)
@@ -1231,12 +1312,19 @@ with tab_stress:
 
             r1, r2, r3, r4 = st.columns(4)
             r1.metric("💼 Antes", f"R$ {result['total_antes']:,.0f}")
-            r2.metric("📉 Depois", f"R$ {result['total_depois']:,.0f}",
-                      delta=f"{result['drawdown']*100:+.1f}%", delta_color="inverse")
+            r2.metric(
+                "📉 Depois",
+                f"R$ {result['total_depois']:,.0f}",
+                delta=f"{result['drawdown']*100:+.1f}%",
+                delta_color="inverse",
+            )
             r3.metric("💰 DY Antes", f"R$ {result['dividendos_antes']:.2f}/mês")
-            r4.metric("💰 DY Depois", f"R$ {result['dividendos_depois']:.2f}/mês",
-                      delta=f"{result['dividendos_delta']*100:+.1f}%",
-                      delta_color="inverse" if result['dividendos_delta'] < 0 else "normal")
+            r4.metric(
+                "💰 DY Depois",
+                f"R$ {result['dividendos_depois']:.2f}/mês",
+                delta=f"{result['dividendos_delta']*100:+.1f}%",
+                delta_color="inverse" if result["dividendos_delta"] < 0 else "normal",
+            )
 
             st.markdown("---")
 
@@ -1258,16 +1346,21 @@ with tab_stress:
             # Antes vs Depois por ativo
             st.markdown("---")
             st.subheader("Detalhamento por Ativo")
-            df_assets = pd.DataFrame([{
-                "Ticker":         a["ticker"],
-                "Setor":          a["sector"],
-                "Valor Antes":    f"R$ {a['valor_antes']:,.2f}",
-                "Valor Depois":   f"R$ {a['valor_depois']:,.2f}",
-                "Impacto R$":     f"R$ {a['impacto_R$']:,.2f}",
-                "Impacto %":      f"{a['impacto_%']:+.2f}%",
-                "DY Antes":       f"R$ {a['dividendo_antes']:.2f}",
-                "DY Depois":      f"R$ {a['dividendo_depois']:.2f}",
-            } for a in assets])
+            df_assets = pd.DataFrame(
+                [
+                    {
+                        "Ticker": a["ticker"],
+                        "Setor": a["sector"],
+                        "Valor Antes": f"R$ {a['valor_antes']:,.2f}",
+                        "Valor Depois": f"R$ {a['valor_depois']:,.2f}",
+                        "Impacto R$": f"R$ {a['impacto_R$']:,.2f}",
+                        "Impacto %": f"{a['impacto_%']:+.2f}%",
+                        "DY Antes": f"R$ {a['dividendo_antes']:.2f}",
+                        "DY Depois": f"R$ {a['dividendo_depois']:.2f}",
+                    }
+                    for a in assets
+                ]
+            )
             st.dataframe(df_assets, use_container_width=True, hide_index=True)
 
             with st.expander("📋 Relatório Completo"):
@@ -1327,7 +1420,7 @@ with tab_avancado:
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("💰 Selic a.a.", f"{macro['selic_anual']}%")
-    m2.metric("📊 CDI a.a.",   f"{macro['cdi_anual']}%")
+    m2.metric("📊 CDI a.a.", f"{macro['cdi_anual']}%")
     m3.metric("🔥 IPCA a.a.", f"{macro['ipca_anual']}%")
     m4.metric(
         "⚖️ Prêmio de Risco",
@@ -1342,16 +1435,25 @@ with tab_avancado:
     st.subheader("📐 Prêmio de Risco por FII vs CDI")
     dy_por_ticker = st.number_input(
         "DY anual médio dos seus FIIs (% total da carteira)",
-        value=12.5, step=0.5, min_value=0.0, max_value=30.0,
+        value=12.5,
+        step=0.5,
+        min_value=0.0,
+        max_value=30.0,
         key="av_dy",
     )
     premio = calcular_premio_risco_fii(dy_por_ticker, macro)
     p1, p2, p3 = st.columns(3)
     p1.metric("DY Anual Carteira", f"{premio['dy_anual_%']:.1f}%")
-    p2.metric("Spread vs CDI", f"{premio['spread_cdi_%']:+.2f}%",
-              delta_color="normal" if premio["spread_cdi_%"] >= 0 else "inverse")
-    p3.metric("Spread vs IPCA", f"{premio['spread_ipca_%']:+.2f}%",
-              delta_color="normal" if premio["spread_ipca_%"] >= 0 else "inverse")
+    p2.metric(
+        "Spread vs CDI",
+        f"{premio['spread_cdi_%']:+.2f}%",
+        delta_color="normal" if premio["spread_cdi_%"] >= 0 else "inverse",
+    )
+    p3.metric(
+        "Spread vs IPCA",
+        f"{premio['spread_ipca_%']:+.2f}%",
+        delta_color="normal" if premio["spread_ipca_%"] >= 0 else "inverse",
+    )
     st.info(f"Classificação: **{premio['rating']}**")
 
     st.markdown("---")
@@ -1363,32 +1465,39 @@ with tab_avancado:
 
     if st.button("📊 Calcular Momentum", key="btn_momentum"):
         with st.spinner("Buscando retornos e calculando momentum..."):
-            av_returns, av_sources = _cached_returns(
-                tuple(av_tickers), _START_DATE, _END_DATE, _force_refresh
-            )
+            av_returns, av_sources = _cached_returns(tuple(av_tickers), _START_DATE, _END_DATE, _force_refresh)
             ranking = rank_by_momentum(av_returns)
 
         n_real_av = sum(1 for s in av_sources.values() if s == "real")
         badge_av = (
             f"🟢 {n_real_av}/{len(av_tickers)} tickers com dados reais"
-            if BRIDGE_HAS_YFINANCE else
-            "🟡 Usando dados sintéticos"
+            if BRIDGE_HAS_YFINANCE
+            else "🟡 Usando dados sintéticos"
         )
         st.caption(badge_av)
 
         if ranking:
             df_mom = pd.DataFrame(ranking)
             df_mom.columns = [
-                "Ticker", "Score", "1 mês %", "3 meses %",
-                "6 meses %", "12 meses %", "Classificação",
+                "Ticker",
+                "Score",
+                "1 mês %",
+                "3 meses %",
+                "6 meses %",
+                "12 meses %",
+                "Classificação",
             ]
+
             # Colorir por score
             def _color_score(val):
                 try:
                     v = float(val)
-                    if v > 5:   return "background-color:#1b5e20; color:#fff"
-                    if v > 0:   return "background-color:#2e7d32; color:#fff"
-                    if v > -5:  return "background-color:#e65100; color:#fff"
+                    if v > 5:
+                        return "background-color:#1b5e20; color:#fff"
+                    if v > 0:
+                        return "background-color:#2e7d32; color:#fff"
+                    if v > -5:
+                        return "background-color:#e65100; color:#fff"
                     return "background-color:#b71c1c; color:#fff"
                 except Exception:
                     return ""
@@ -1414,11 +1523,9 @@ with tab_avancado:
 
     if st.button("🔵 Agrupar FIIs por Perfil", key="btn_cluster"):
         with st.spinner("Calculando clusters..."):
-            av_returns_cl, av_sources_cl = _cached_returns(
-                tuple(av_tickers), _START_DATE, _END_DATE, _force_refresh
-            )
+            av_returns_cl, av_sources_cl = _cached_returns(tuple(av_tickers), _START_DATE, _END_DATE, _force_refresh)
             resultado = cluster_portfolio(av_returns_cl)
-            sugestao  = suggest_diversification(resultado)
+            sugestao = suggest_diversification(resultado)
 
         st.success(f"🔵 {resultado['k']} clusters encontrados para {len(av_tickers)} ativos")
 
@@ -1429,9 +1536,11 @@ with tab_avancado:
                 for i, t in enumerate(tickers_cluster):
                     feats = resultado["features"].get(t, {})
                     with cols[i]:
-                        st.metric(t,
-                                  f"{feats.get('retorno_medio', 0)*100:+.2f}%/mês",
-                                  f"Vol: {feats.get('volatilidade', 0)*100:.2f}%")
+                        st.metric(
+                            t,
+                            f"{feats.get('retorno_medio', 0)*100:+.2f}%/mês",
+                            f"Vol: {feats.get('volatilidade', 0)*100:.2f}%",
+                        )
 
         st.markdown("---")
         st.subheader("✅ Carteira Diversificada por Cluster")
@@ -1440,9 +1549,7 @@ with tab_avancado:
         st.markdown(sugestao_str)
 
         # Baixar sugestão como CSV
-        sugestao_csv = "ticker,quantidade,preco_medio\n" + "\n".join(
-            f"{t},100,10.0" for t in sugestao
-        )
+        sugestao_csv = "ticker,quantidade,preco_medio\n" + "\n".join(f"{t},100,10.0" for t in sugestao)
         st.download_button(
             "⬇️ Baixar Sugestão CSV",
             data=sugestao_csv.encode("utf-8"),
@@ -1451,4 +1558,3 @@ with tab_avancado:
         )
     else:
         st.info("Clique em **🔵 Agrupar FIIs** para identificar grupos com perfil similar.")
-

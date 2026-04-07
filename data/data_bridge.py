@@ -17,7 +17,6 @@ import random
 from typing import Optional
 from core.logger import logger
 
-
 # Importação defensiva do data_loader
 try:
     from data.data_loader import (
@@ -29,6 +28,7 @@ try:
         DIVIDENDS_DIR,
         HAS_YFINANCE,
     )
+
     _HAS_LOADER = True
 except ImportError:
     _HAS_LOADER = False
@@ -43,55 +43,85 @@ except ImportError:
 
 try:
     from data.universe import get_sector_map as _get_sector_map
+
     SECTOR_MAP: dict[str, str] = _get_sector_map()
 except ImportError:
     # Fallback mínimo caso universe.py não esteja disponível
     SECTOR_MAP: dict[str, str] = {
-        "MXRF11": "Papel (CRI)", "KNCR11": "Papel (CRI)", "RECR11": "Papel (CRI)",
-        "HGLG11": "Logística", "XPLG11": "Logística", "BTLG11": "Logística",
-        "XPML11": "Shopping", "MALL11": "Shopping", "VISC11": "Shopping",
-        "BRCR11": "Lajes Corp.", "JSRE11": "Lajes Corp.",
-        "BCFF11": "Fundo de Fundos", "HFOF11": "Fundo de Fundos",
+        "MXRF11": "Papel (CRI)",
+        "KNCR11": "Papel (CRI)",
+        "RECR11": "Papel (CRI)",
+        "HGLG11": "Logística",
+        "XPLG11": "Logística",
+        "BTLG11": "Logística",
+        "XPML11": "Shopping",
+        "MALL11": "Shopping",
+        "VISC11": "Shopping",
+        "BRCR11": "Lajes Corp.",
+        "JSRE11": "Lajes Corp.",
+        "BCFF11": "Fundo de Fundos",
+        "HFOF11": "Fundo de Fundos",
     }
 
 # Parâmetros de retorno sintético por setor (mu_mensal, sigma_mensal)
 _SECTOR_PARAMS: dict[str, tuple[float, float]] = {
-    "Papel (CRI)":     (0.0085, 0.020),
-    "Logística":       (0.0090, 0.030),
-    "Shopping":        (0.0075, 0.035),
-    "Lajes Corp.":     (0.0065, 0.033),
+    "Papel (CRI)": (0.0085, 0.020),
+    "Logística": (0.0090, 0.030),
+    "Shopping": (0.0075, 0.035),
+    "Lajes Corp.": (0.0065, 0.033),
     "Fundo de Fundos": (0.0080, 0.028),
-    "Híbrido":         (0.0080, 0.028),
-    "Saúde":           (0.0070, 0.032),
-    "Agro":            (0.0080, 0.028),
-    "Residencial":     (0.0075, 0.028),
-    "Educacional":     (0.0070, 0.030),
-    "Hotel":           (0.0065, 0.035),
-    "Outros":          (0.0075, 0.028),
+    "Híbrido": (0.0080, 0.028),
+    "Saúde": (0.0070, 0.032),
+    "Agro": (0.0080, 0.028),
+    "Residencial": (0.0075, 0.028),
+    "Educacional": (0.0070, 0.030),
+    "Hotel": (0.0065, 0.035),
+    "Outros": (0.0075, 0.028),
 }
 
 # Último preço aproximado por ticker (fallback offline)
 _FALLBACK_PRICES: dict[str, float] = {
-    "MXRF11": 10.05, "KNCR11": 97.80, "RECR11": 8.90, "MCCI11": 8.10,
-    "HGLG11": 155.00, "XPLG11": 112.00, "BTLG11": 100.00, "VILG11": 98.00,
-    "XPML11": 90.00, "MALL11": 97.00, "VISC11": 91.00, "HSML11": 83.00,
-    "BRCR11": 60.00, "JSRE11": 75.00,
-    "BCFF11": 72.00, "HFOF11": 68.00,
+    "MXRF11": 10.05,
+    "KNCR11": 97.80,
+    "RECR11": 8.90,
+    "MCCI11": 8.10,
+    "HGLG11": 155.00,
+    "XPLG11": 112.00,
+    "BTLG11": 100.00,
+    "VILG11": 98.00,
+    "XPML11": 90.00,
+    "MALL11": 97.00,
+    "VISC11": 91.00,
+    "HSML11": 83.00,
+    "BRCR11": 60.00,
+    "JSRE11": 75.00,
+    "BCFF11": 72.00,
+    "HFOF11": 68.00,
 }
 
 # Dividendo mensal aproximado R$/cota (fallback offline)
 _FALLBACK_DIVIDENDS: dict[str, float] = {
-    "MXRF11": 0.09, "KNCR11": 0.75, "RECR11": 0.07, "MCCI11": 0.07,
-    "HGLG11": 1.10, "XPLG11": 0.72, "BTLG11": 0.65,
-    "XPML11": 0.65, "MALL11": 0.68, "VISC11": 0.60,
-    "BRCR11": 0.35, "JSRE11": 0.45,
-    "BCFF11": 0.55, "HFOF11": 0.50,
+    "MXRF11": 0.09,
+    "KNCR11": 0.75,
+    "RECR11": 0.07,
+    "MCCI11": 0.07,
+    "HGLG11": 1.10,
+    "XPLG11": 0.72,
+    "BTLG11": 0.65,
+    "XPML11": 0.65,
+    "MALL11": 0.68,
+    "VISC11": 0.60,
+    "BRCR11": 0.35,
+    "JSRE11": 0.45,
+    "BCFF11": 0.55,
+    "HFOF11": 0.50,
 }
 
 
 # ---------------------------------------------------------------------------
 # Geração de retornos sintéticos reproduzíveis
 # ---------------------------------------------------------------------------
+
 
 def _synthetic_returns(ticker: str, n_months: int = 36) -> list[float]:
     """Gera retornos mensais sintéticos realistas com base no setor do FII."""
@@ -101,13 +131,14 @@ def _synthetic_returns(ticker: str, n_months: int = 36) -> list[float]:
     rng = random.Random(hash(ticker) % 99991)
     # Componente de mercado (70%) + componente idiossincrático (30%)
     market = [rng.gauss(mu, sigma * 0.5) for _ in range(n_months)]
-    idio   = [rng.gauss(0.0, sigma * 0.5) for _ in range(n_months)]
+    idio = [rng.gauss(0.0, sigma * 0.5) for _ in range(n_months)]
     return [round(m * 0.7 + i * 0.3, 6) for m, i in zip(market, idio)]
 
 
 # ---------------------------------------------------------------------------
 # API pública: obter retornos mensais reais (com fallback)
 # ---------------------------------------------------------------------------
+
 
 def load_returns(
     ticker: str,
@@ -132,8 +163,7 @@ def load_returns(
     """
     if _HAS_LOADER and HAS_YFINANCE:
         try:
-            prices = fetch_prices(ticker, start_date, end_date,
-                                  frequency="1mo", force_refresh=force_refresh)
+            prices = fetch_prices(ticker, start_date, end_date, frequency="1mo", force_refresh=force_refresh)
             if len(prices) >= 3:
                 closes = get_close_prices(prices)
                 returns = calculate_monthly_returns(closes)
@@ -147,6 +177,7 @@ def load_returns(
 
     # Fallback: retornos sintéticos
     import datetime
+
     try:
         d0 = datetime.date.fromisoformat(start_date)
         d1 = datetime.date.fromisoformat(end_date)
@@ -199,6 +230,7 @@ def load_last_price(ticker: str) -> tuple[float, str]:
     if _HAS_LOADER and HAS_YFINANCE:
         try:
             import datetime
+
             end = datetime.date.today().isoformat()
             start = (datetime.date.today() - datetime.timedelta(days=60)).isoformat()
             prices = fetch_prices(ticker, start, end, frequency="1d")
@@ -226,6 +258,7 @@ def load_monthly_dividend(ticker: str) -> tuple[float, str]:
     if _HAS_LOADER and HAS_YFINANCE:
         try:
             import datetime
+
             end = datetime.date.today().isoformat()
             start = (datetime.date.today() - datetime.timedelta(days=365)).isoformat()
             divs = fetch_dividends(ticker, start, end)
@@ -260,13 +293,15 @@ def build_portfolio_from_tickers(
     for ticker in tickers:
         qty = (quantities or {}).get(ticker, 100)
         price, _ = load_last_price(ticker)
-        div, _   = load_monthly_dividend(ticker)
-        portfolio.append({
-            "ticker":          ticker,
-            "quantidade":      qty,
-            "preco_atual":     price,
-            "dividend_mensal": div,
-        })
+        div, _ = load_monthly_dividend(ticker)
+        portfolio.append(
+            {
+                "ticker": ticker,
+                "quantidade": qty,
+                "preco_atual": price,
+                "dividend_mensal": div,
+            }
+        )
     return portfolio
 
 
@@ -288,18 +323,18 @@ def get_data_quality_report(
     """
     _, sources = load_returns_bulk(tickers, start_date, end_date)
 
-    real_tickers   = [t for t, s in sources.items() if s == "real"]
-    synth_tickers  = [t for t, s in sources.items() if s == "sintético"]
+    real_tickers = [t for t, s in sources.items() if s == "real"]
+    synth_tickers = [t for t, s in sources.items() if s == "sintético"]
     total = len(tickers)
 
     return {
-        "total":           total,
-        "real":            len(real_tickers),
-        "sintetico":       len(synth_tickers),
-        "pct_real":        round(len(real_tickers) / total * 100, 1) if total > 0 else 0.0,
-        "tickers_reais":   real_tickers,
-        "tickers_sintet":  synth_tickers,
-        "yfinance_ativo":  HAS_YFINANCE,
-        "data_inicio":     start_date,
-        "data_fim":        end_date,
+        "total": total,
+        "real": len(real_tickers),
+        "sintetico": len(synth_tickers),
+        "pct_real": round(len(real_tickers) / total * 100, 1) if total > 0 else 0.0,
+        "tickers_reais": real_tickers,
+        "tickers_sintet": synth_tickers,
+        "yfinance_ativo": HAS_YFINANCE,
+        "data_inicio": start_date,
+        "data_fim": end_date,
     }

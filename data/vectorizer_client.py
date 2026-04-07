@@ -137,13 +137,15 @@ class VectorizerClient:
             results = []
             for hit in data.get("results", []):
                 payload = hit.get("payload", {})
-                results.append({
-                    "id": hit.get("id"),
-                    "score": hit.get("score", 0),
-                    "content": payload.get("content", ""),
-                    "file_path": payload.get("file_path", ""),
-                    "metadata": payload.get("metadata", {}),
-                })
+                results.append(
+                    {
+                        "id": hit.get("id"),
+                        "score": hit.get("score", 0),
+                        "content": payload.get("content", ""),
+                        "file_path": payload.get("file_path", ""),
+                        "metadata": payload.get("metadata", {}),
+                    }
+                )
             return results
 
         except Exception as e:

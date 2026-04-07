@@ -59,6 +59,7 @@ _CACHE_TTL_HOURS = 24
 # Cache
 # ---------------------------------------------------------------------------
 
+
 def _init_cache(db_path: str = _CACHE_DB) -> sqlite3.Connection:
     """Inicializa tabela de cache para FundsExplorer."""
     conn = sqlite3.connect(db_path)
@@ -106,6 +107,7 @@ def _save_cache(conn: sqlite3.Connection, ticker: str, data: dict) -> None:
 # Parsing helpers
 # ---------------------------------------------------------------------------
 
+
 def _parse_br_number(text: str) -> float:
     """Converte numero BR (1.234,56) para float."""
     if not text or text.strip() in ("-", "N/A", "--", ""):
@@ -121,6 +123,7 @@ def _parse_br_number(text: str) -> float:
 # ---------------------------------------------------------------------------
 # Scraping do ranking (bulk — todos os FIIs de uma vez)
 # ---------------------------------------------------------------------------
+
 
 def scrape_ranking(db_path: str = _CACHE_DB) -> list[dict]:
     """
@@ -200,6 +203,7 @@ def scrape_ranking(db_path: str = _CACHE_DB) -> list[dict]:
 # Scraping individual de FII (dados detalhados)
 # ---------------------------------------------------------------------------
 
+
 def scrape_fii_detail(ticker: str, db_path: str = _CACHE_DB) -> Optional[dict]:
     """
     Faz scraping da pagina individual de um FII no FundsExplorer.
@@ -265,10 +269,12 @@ def scrape_fii_detail(ticker: str, db_path: str = _CACHE_DB) -> Optional[dict]:
             for row in div_rows[:12]:  # Ultimos 12 meses
                 cells = row.select("td")
                 if len(cells) >= 2:
-                    dividendos.append({
-                        "data": cells[0].get_text(strip=True),
-                        "valor": _parse_br_number(cells[1].get_text(strip=True)),
-                    })
+                    dividendos.append(
+                        {
+                            "data": cells[0].get_text(strip=True),
+                            "valor": _parse_br_number(cells[1].get_text(strip=True)),
+                        }
+                    )
             if dividendos:
                 data["historico_dividendos"] = dividendos
 
@@ -289,6 +295,7 @@ def scrape_fii_detail(ticker: str, db_path: str = _CACHE_DB) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 # API Publica
 # ---------------------------------------------------------------------------
+
 
 def fetch_fundsexplorer_data(
     ticker: str,

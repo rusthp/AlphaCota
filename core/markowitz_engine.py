@@ -18,10 +18,10 @@ import random
 import statistics
 from typing import Optional
 
-
 # ---------------------------------------------------------------------------
 # Primitivas de retorno e risco
 # ---------------------------------------------------------------------------
+
 
 def calculate_expected_return(
     returns: list[float],
@@ -100,10 +100,10 @@ def calculate_portfolio_vol(
 
     for t1 in tickers:
         for t2 in tickers:
-            w1   = weights.get(t1, 0.0)
-            w2   = weights.get(t2, 0.0)
-            s1   = volatilities.get(t1, 0.0)
-            s2   = volatilities.get(t2, 0.0)
+            w1 = weights.get(t1, 0.0)
+            w2 = weights.get(t2, 0.0)
+            s1 = volatilities.get(t1, 0.0)
+            s2 = volatilities.get(t2, 0.0)
             corr = correlation_matrix.get(t1, {}).get(t2, 1.0 if t1 == t2 else 0.0)
             variance += w1 * w2 * s1 * s2 * corr
 
@@ -134,6 +134,7 @@ def calculate_sharpe(
 # ---------------------------------------------------------------------------
 # Geração aleatória de pesos (base do Monte Carlo de portfólio)
 # ---------------------------------------------------------------------------
+
 
 def _random_weights(
     n: int,
@@ -174,6 +175,7 @@ def _random_weights(
 # Monte Carlo de portfólio (fronteira eficiente simulada)
 # ---------------------------------------------------------------------------
 
+
 def simulate_portfolio_frontier(
     tickers: list[str],
     return_series: dict[str, list[float]],
@@ -205,8 +207,8 @@ def simulate_portfolio_frontier(
     n = len(tickers)
 
     # Pré-calcular retornos e volatilidades esperadas
-    exp_returns   = {t: calculate_expected_return(return_series.get(t, [])) for t in tickers}
-    annual_vols   = {t: calculate_annual_volatility(return_series.get(t, [])) for t in tickers}
+    exp_returns = {t: calculate_expected_return(return_series.get(t, [])) for t in tickers}
+    annual_vols = {t: calculate_annual_volatility(return_series.get(t, [])) for t in tickers}
 
     portfolios = []
     random.seed(seed)
@@ -217,14 +219,16 @@ def simulate_portfolio_frontier(
 
         port_ret = calculate_portfolio_return(weights, exp_returns)
         port_vol = calculate_portfolio_vol(weights, annual_vols, correlation_matrix)
-        sharpe   = calculate_sharpe(port_ret, port_vol, risk_free_rate)
+        sharpe = calculate_sharpe(port_ret, port_vol, risk_free_rate)
 
-        portfolios.append({
-            "weights":    {t: round(w, 4) for t, w in weights.items()},
-            "return":     round(port_ret, 6),
-            "volatility": round(port_vol, 6),
-            "sharpe":     round(sharpe, 4),
-        })
+        portfolios.append(
+            {
+                "weights": {t: round(w, 4) for t, w in weights.items()},
+                "return": round(port_ret, 6),
+                "volatility": round(port_vol, 6),
+                "sharpe": round(sharpe, 4),
+            }
+        )
 
     return portfolios
 
@@ -232,6 +236,7 @@ def simulate_portfolio_frontier(
 # ---------------------------------------------------------------------------
 # Otimizações: Max Sharpe e Min Volatility
 # ---------------------------------------------------------------------------
+
 
 def find_max_sharpe(portfolios: list[dict]) -> dict:
     """
@@ -292,20 +297,21 @@ def find_equal_weight(
 
     port_ret = calculate_portfolio_return(weights, exp_returns)
     port_vol = calculate_portfolio_vol(weights, annual_vols, correlation_matrix)
-    sharpe   = calculate_sharpe(port_ret, port_vol, risk_free_rate)
+    sharpe = calculate_sharpe(port_ret, port_vol, risk_free_rate)
 
     return {
-        "weights":    weights,
-        "return":     round(port_ret, 6),
+        "weights": weights,
+        "return": round(port_ret, 6),
         "volatility": round(port_vol, 6),
-        "sharpe":     round(sharpe, 4),
-        "strategy":   "equal_weight",
+        "sharpe": round(sharpe, 4),
+        "strategy": "equal_weight",
     }
 
 
 # ---------------------------------------------------------------------------
 # Resumo comparativo das estratégias
 # ---------------------------------------------------------------------------
+
 
 def compare_strategies(
     tickers: list[str],
@@ -338,18 +344,22 @@ def compare_strategies(
             'equal_weight': baseling igualmente ponderado.
     """
     frontier = simulate_portfolio_frontier(
-        tickers, return_series, correlation_matrix,
-        n_simulations, risk_free_rate, min_weight, max_weight, seed,
+        tickers,
+        return_series,
+        correlation_matrix,
+        n_simulations,
+        risk_free_rate,
+        min_weight,
+        max_weight,
+        seed,
     )
 
     return {
-        "frontier":       frontier,
-        "max_sharpe":     find_max_sharpe(frontier),
+        "frontier": frontier,
+        "max_sharpe": find_max_sharpe(frontier),
         "min_volatility": find_min_volatility(frontier),
-        "equal_weight":   find_equal_weight(
-            tickers, return_series, correlation_matrix, risk_free_rate
-        ),
-        "n_simulations":  len(frontier),
+        "equal_weight": find_equal_weight(tickers, return_series, correlation_matrix, risk_free_rate),
+        "n_simulations": len(frontier),
     }
 
 
@@ -370,9 +380,9 @@ def format_strategy_report(result: dict) -> str:
     ]
 
     for key, label in [
-        ("max_sharpe",     "Max Sharpe Ratio"),
+        ("max_sharpe", "Max Sharpe Ratio"),
         ("min_volatility", "Min Volatility"),
-        ("equal_weight",   "Equally Weighted (baseline)"),
+        ("equal_weight", "Equally Weighted (baseline)"),
     ]:
         p = result.get(key, {})
         if not p:
@@ -382,7 +392,7 @@ def format_strategy_report(result: dict) -> str:
             f"     Retorno  : {p.get('return', 0)*100:.2f}% a.a.",
             f"     Risco    : {p.get('volatility', 0)*100:.2f}% a.a.",
             f"     Sharpe   : {p.get('sharpe', 0):.3f}",
-            "     Pesos    :"
+            "     Pesos    :",
         ]
         for ticker, w in sorted(p.get("weights", {}).items(), key=lambda x: -x[1]):
             lines.append(f"       {ticker:<10} {w*100:>6.2f}%")

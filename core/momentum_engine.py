@@ -12,10 +12,10 @@ Funções puras, sem dependências externas.
 import statistics
 import math
 
-
 # ---------------------------------------------------------------------------
 # Cálculo de retorno acumulado
 # ---------------------------------------------------------------------------
+
 
 def cumulative_return(monthly_returns: list[float], n_months: int) -> float:
     """
@@ -39,7 +39,7 @@ def cumulative_return(monthly_returns: list[float], n_months: int) -> float:
 
     accumulated = 1.0
     for r in window:
-        accumulated *= (1 + r)
+        accumulated *= 1 + r
     return round(accumulated - 1.0, 6)
 
 
@@ -77,18 +77,17 @@ def momentum_score(
     """
     w = weights or {"1m": 0.10, "3m": 0.20, "6m": 0.30, "12m": 0.40}
 
-    r1m  = cumulative_return(monthly_returns, 1)
-    r3m  = cumulative_return(monthly_returns, 3)
-    r6m  = cumulative_return(monthly_returns, 6)
+    r1m = cumulative_return(monthly_returns, 1)
+    r3m = cumulative_return(monthly_returns, 3)
+    r6m = cumulative_return(monthly_returns, 6)
     r12m = cumulative_return(monthly_returns, 12)
 
     total_w = sum(w.values())
     score = (
-        r1m  * w.get("1m",  0) +
-        r3m  * w.get("3m",  0) +
-        r6m  * w.get("6m",  0) +
-        r12m * w.get("12m", 0)
-    ) / total_w if total_w > 0 else 0.0
+        (r1m * w.get("1m", 0) + r3m * w.get("3m", 0) + r6m * w.get("6m", 0) + r12m * w.get("12m", 0)) / total_w
+        if total_w > 0
+        else 0.0
+    )
 
     if score >= 0.12:
         classification = "🔥 Forte Alta"
@@ -102,11 +101,11 @@ def momentum_score(
         classification = "❄️ Forte Queda"
 
     return {
-        "retorno_1m":    round(r1m * 100, 2),
-        "retorno_3m":    round(r3m * 100, 2),
-        "retorno_6m":    round(r6m * 100, 2),
-        "retorno_12m":   round(r12m * 100, 2),
-        "score":         round(score * 100, 4),
+        "retorno_1m": round(r1m * 100, 2),
+        "retorno_3m": round(r3m * 100, 2),
+        "retorno_6m": round(r6m * 100, 2),
+        "retorno_12m": round(r12m * 100, 2),
+        "score": round(score * 100, 4),
         "classificacao": classification,
     }
 
@@ -114,6 +113,7 @@ def momentum_score(
 # ---------------------------------------------------------------------------
 # Ranking de momentum
 # ---------------------------------------------------------------------------
+
 
 def rank_by_momentum(
     return_series: dict[str, list[float]],
@@ -133,15 +133,17 @@ def rank_by_momentum(
     results = []
     for ticker, returns in return_series.items():
         ms = momentum_score(returns, weights)
-        results.append({
-            "ticker":        ticker,
-            "score":         ms["score"],
-            "retorno_1m_%":  ms["retorno_1m"],
-            "retorno_3m_%":  ms["retorno_3m"],
-            "retorno_6m_%":  ms["retorno_6m"],
-            "retorno_12m_%": ms["retorno_12m"],
-            "classificacao": ms["classificacao"],
-        })
+        results.append(
+            {
+                "ticker": ticker,
+                "score": ms["score"],
+                "retorno_1m_%": ms["retorno_1m"],
+                "retorno_3m_%": ms["retorno_3m"],
+                "retorno_6m_%": ms["retorno_6m"],
+                "retorno_12m_%": ms["retorno_12m"],
+                "classificacao": ms["classificacao"],
+            }
+        )
 
     return sorted(results, key=lambda x: x["score"], reverse=True)
 
@@ -198,15 +200,18 @@ def momentum_vs_benchmark(
     Returns:
         dict com retorno do ativo, benchmark e alpha de momentum.
     """
-    r_ticker    = cumulative_return(ticker_returns, n_months)
+    r_ticker = cumulative_return(ticker_returns, n_months)
     r_benchmark = cumulative_return(benchmark_returns, n_months)
-    alpha       = round(r_ticker - r_benchmark, 6)
+    alpha = round(r_ticker - r_benchmark, 6)
 
     sinal = "+" if alpha >= 0 else ""
     return {
-        "retorno_ativo_%":     round(r_ticker * 100, 2),
+        "retorno_ativo_%": round(r_ticker * 100, 2),
         "retorno_benchmark_%": round(r_benchmark * 100, 2),
-        "alpha_%":             round(alpha * 100, 2),
-        "result":              f"Superou benchmark em {sinal}{alpha*100:.2f}%" if alpha >= 0
-                               else f"Abaixo do benchmark em {alpha*100:.2f}%",
+        "alpha_%": round(alpha * 100, 2),
+        "result": (
+            f"Superou benchmark em {sinal}{alpha*100:.2f}%"
+            if alpha >= 0
+            else f"Abaixo do benchmark em {alpha*100:.2f}%"
+        ),
     }

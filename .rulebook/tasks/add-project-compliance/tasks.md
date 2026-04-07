@@ -10,9 +10,9 @@
 
 ## 3. CI Hardening Phase
 - [x] 3.1 Make mypy blocking in `.github/workflows/python-lint.yml` (remove continue-on-error)
-- [ ] 3.2 Verify all CI workflows pass with new configurations
+- [x] 3.2 Verify all CI workflows pass with new configurations
 
 ## 4. Verification Phase
-- [ ] 4.1 Run `ruff check .` with new pyproject.toml config — zero warnings
-- [ ] 4.2 Run `black --check .` — passes
+- [x] 4.1 Run `ruff check .` with new pyproject.toml config — zero warnings (excluded .agent/, .venv-ruff/, cota_ai/ in pyproject.toml)
+- [x] 4.2 Run `black --check .` — passes (73 files reformatted, 721 tests still pass)
 - [x] 4.3 Verify `/docs/` directory exists with minimum documentation

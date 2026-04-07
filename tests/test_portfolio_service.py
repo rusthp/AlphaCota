@@ -20,10 +20,12 @@ class TestRunFullCycle:
             "rebalanceamento": {"sugestao": []},
         }
 
-        with patch("services.portfolio_service.get_operations", return_value=mock_ops), \
-             patch("services.portfolio_service.get_proventos", return_value=mock_provs), \
-             patch("services.portfolio_service.generate_decision_report", return_value=mock_report), \
-             patch("services.portfolio_service.save_portfolio_snapshot") as mock_save:
+        with (
+            patch("services.portfolio_service.get_operations", return_value=mock_ops),
+            patch("services.portfolio_service.get_proventos", return_value=mock_provs),
+            patch("services.portfolio_service.generate_decision_report", return_value=mock_report),
+            patch("services.portfolio_service.save_portfolio_snapshot") as mock_save,
+        ):
             result = run_full_cycle(
                 user_id=1,
                 precos_atuais={"HGLG11": 160.0},
@@ -43,9 +45,11 @@ class TestRunFullCycle:
             "rebalanceamento": {"sugestao": []},
         }
 
-        with patch("services.portfolio_service.get_operations", return_value=[]), \
-             patch("services.portfolio_service.get_proventos", return_value=[]), \
-             patch("services.portfolio_service.generate_decision_report", return_value=mock_report), \
-             patch("services.portfolio_service.save_portfolio_snapshot"):
+        with (
+            patch("services.portfolio_service.get_operations", return_value=[]),
+            patch("services.portfolio_service.get_proventos", return_value=[]),
+            patch("services.portfolio_service.generate_decision_report", return_value=mock_report),
+            patch("services.portfolio_service.save_portfolio_snapshot"),
+        ):
             result = run_full_cycle(1, {}, {}, 0, 0.10, 60000)
             assert result["resumo_carteira"]["valor_total"] == 0.0

@@ -32,9 +32,7 @@ def register_macro_tools(mcp: Any) -> None:
 
         data["juro_real"] = round(juro_real, 2)
         data["spread_fii_vs_selic"] = round(spread, 2)
-        data["atratividade_fiis"] = (
-            "Alta" if spread > 0 else "Moderada" if spread > -2 else "Baixa"
-        )
+        data["atratividade_fiis"] = "Alta" if spread > 0 else "Moderada" if spread > -2 else "Baixa"
 
         return data
 

@@ -6,6 +6,7 @@ Testes unitários para core/momentum_engine.py e core/cluster_engine.py.
 
 import sys
 import os
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from core.momentum_engine import (
@@ -64,6 +65,7 @@ RETURN_SERIES = {
 # MOMENTUM ENGINE
 # ===========================================================================
 
+
 def test_cumulative_return_positivo():
     r = cumulative_return([0.01, 0.01, 0.01], 3)
     assert_close(r, 0.0303, label="cum_return 3×1%")
@@ -109,6 +111,24 @@ def test_momentum_score_classificacao_forte_alta():
     assert "Alta" in ms["classificacao"], f"Esperado 'Alta': {ms['classificacao']}"
 
 
+def test_momentum_score_classificacao_forte_alta_branch():
+    """Score >= 0.12 must produce 'Forte Alta' classification (line 93)."""
+    # Monthly returns of ~2.5% yield 12m ≈ 34%, 6m ≈ 16%, score well above 0.12
+    very_high = [0.025] * 12
+    ms = momentum_score(very_high)
+    assert ms["classificacao"] == "🔥 Forte Alta", f"Esperado Forte Alta, obtido: {ms['classificacao']}"
+    assert ms["score"] >= 0.12
+
+
+def test_momentum_score_classificacao_queda_moderada():
+    """Score between -0.06 and 0.0 must produce 'Queda Moderada' (line 99)."""
+    # Monthly returns of -0.4% yield score in the -0.06 to 0.0 band
+    mild_negative = [-0.004] * 12
+    ms = momentum_score(mild_negative)
+    assert ms["classificacao"] == "📉 Queda Moderada", f"Esperado Queda Moderada, obtido: {ms['classificacao']}"
+    assert -6.0 <= ms["score"] < 0.0
+
+
 def test_rank_by_momentum_ordenado():
     ranking = rank_by_momentum(RETURN_SERIES)
     for i in range(len(ranking) - 1):
@@ -142,6 +162,7 @@ def test_momentum_vs_benchmark():
 # ===========================================================================
 # CLUSTER ENGINE
 # ===========================================================================
+
 
 def test_extract_features_chaves():
     feats = extract_features(RETURNS_ALTA)
@@ -215,9 +236,98 @@ def test_suggest_diversification():
     assert len(sugestao) <= len(RETURN_SERIES)
 
 
+# ---------------------------------------------------------------------------
+# cluster_engine — edge case tests to cover remaining branches
+# ---------------------------------------------------------------------------
+
+
+def test_extract_features_empty_returns_zeros():
+    """extract_features([]) must return the zero-dict (line 42)."""
+    feats = extract_features([])
+    assert feats["retorno_medio"] == 0
+    assert feats["volatilidade"] == 0
+    assert feats["retorno_12m"] == 0
+    assert feats["max_drawdown"] == 0
+    assert feats["skewness"] == 0
+
+
+def test_extract_features_single_element_skewness_zero():
+    """Single element: vol==0, skewness must be 0.0 (else branch at line 74)."""
+    feats = extract_features([0.05])
+    assert feats["skewness"] == 0.0
+    assert feats["volatilidade"] == 0.0
+
+
+def test_extract_features_two_elements_skewness_zero():
+    """Two elements: len < 3, skewness must be 0.0 (else branch at line 74)."""
+    feats = extract_features([0.01, 0.02])
+    assert feats["skewness"] == 0.0
+
+
+def test_normalize_matrix_empty_returns_unchanged():
+    """normalize_matrix([]) must return the input unchanged (line 122)."""
+    assert normalize_matrix([]) == []
+
+
+def test_normalize_matrix_row_with_empty_cols():
+    """normalize_matrix([[]] triggers the not matrix[0] guard (line 122)."""
+    result = normalize_matrix([[]])
+    assert result == [[]]
+
+
+def test_centroid_empty_points():
+    """_centroid([]) must return [0.0] (line 150)."""
+    from core.cluster_engine import _centroid
+    assert _centroid([]) == [0.0]
+
+
+def test_kmeans_matrix_smaller_than_k():
+    """When len(matrix) <= k, return range labels without running k-means (line 174)."""
+    matrix = [[1.0, 0.0], [0.0, 1.0]]
+    labels = kmeans(matrix, k=5)
+    assert labels == [0, 1]
+
+
+def test_cluster_portfolio_single_ticker():
+    """cluster_portfolio with <2 tickers returns k=1 early (line 240)."""
+    series = {"MXRF11": RETURNS_ALTA}
+    result = cluster_portfolio(series)
+    assert result["k"] == 1
+    assert "MXRF11" in result["labels"]
+    assert result["labels"]["MXRF11"] == 0
+
+
+def test_tickers_same_cluster_unknown_ticker_returns_empty():
+    """tickers_same_cluster with unknown ticker returns [] (line 312)."""
+    result = cluster_portfolio(RETURN_SERIES)
+    same = tickers_same_cluster(result, "ZZZZ11")
+    assert same == []
+
+
+def test_cluster_name_moderate_profile():
+    """Force cluster whose avg_ret is in the Retorno Moderado band (line 296)."""
+    # avg_ret=0.007 (>0.006), avg_vol=0.020 (<0.035) → Retorno Moderado
+    moderate_returns = [0.007] * 24
+    series = {"A11": moderate_returns, "B11": moderate_returns, "C11": moderate_returns}
+    result = cluster_portfolio(series, k=1)
+    names = result.get("cluster_names", {})
+    assert any("Moderado" in v for v in names.values())
+
+
+def test_cluster_name_high_volatility_profile():
+    """Force cluster whose avg_vol >= 0.035 → Alta Volatilidade (line 298)."""
+    # alternating 0 and 0.10 gives high standard deviation
+    high_vol = [0.0 if i % 2 == 0 else 0.10 for i in range(24)]
+    series = {"X11": high_vol, "Y11": high_vol, "Z11": high_vol}
+    result = cluster_portfolio(series, k=1)
+    names = result.get("cluster_names", {})
+    assert any("Volatilidade" in v for v in names.values())
+
+
 # ===========================================================================
 # Runner
 # ===========================================================================
+
 
 def main() -> bool:
     tests_momentum = [
@@ -275,4 +385,5 @@ def main() -> bool:
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(0 if main() else 1)

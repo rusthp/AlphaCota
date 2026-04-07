@@ -36,7 +36,7 @@ def calculate_years_to_fire(
         # Applica o rendimento do mês e soma o novo aporte
         patrimonio = (patrimonio * (1 + taxa_mensal)) + aporte_mensal
         meses += 1
-        
+
         # Trava de segurança para evitar loops infinitos irreais (ex: 200 anos)
         if meses > 2400:
             raise ValueError("Meta inalcançável com os parâmetros atuais (mais de 200 anos).")

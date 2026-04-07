@@ -1,6 +1,7 @@
 import statistics
 import math
 
+
 def calculate_volatility(lista_retornos_diarios: list[float]) -> float:
     """
     Calcula a volatilidade (risco) anualizada de um ativo.

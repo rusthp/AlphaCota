@@ -26,22 +26,33 @@ from data.data_loader import fetch_prices, fetch_dividends, PRICES_DIR, DIVIDEND
 
 FII_UNIVERSE = [
     # FIIs de Papel (CRI)
-    "MXRF11", "KNCR11", "RECR11", "MCCI11", "VRTA11",
+    "MXRF11",
+    "KNCR11",
+    "RECR11",
+    "MCCI11",
+    "VRTA11",
     # FIIs de Tijolo — Logística
-    "HGLG11", "XPLG11", "BRCO11", "BTLG11",
+    "HGLG11",
+    "XPLG11",
+    "BRCO11",
+    "BTLG11",
     # FIIs de Tijolo — Shoppings
-    "XPML11", "MALL11", "VISC11",
+    "XPML11",
+    "MALL11",
+    "VISC11",
     # FIIs de Tijolo — Lajes Corporativas
-    "BRCR11", "JSRE11",
+    "BRCR11",
+    "JSRE11",
     # FIIs Híbridos / Diversificados
-    "BCFF11", "RBRF11",
+    "BCFF11",
+    "RBRF11",
     # Fundos de Desenvolvimento
     "HFOF11",
 ]
 
-BENCHMARK = "^BVSP"   # IBOVESPA como proxy até IFIX estar disponível no yfinance
+BENCHMARK = "^BVSP"  # IBOVESPA como proxy até IFIX estar disponível no yfinance
 START_DATE = "2020-01-01"
-END_DATE   = "2025-12-31"
+END_DATE = "2025-12-31"
 
 
 def bootstrap(
@@ -92,13 +103,9 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="AlphaCota — Bootstrap de Dados Históricos")
-    parser.add_argument(
-        "--tickers", nargs="*",
-        help="Tickers específicos (padrão: universo completo)",
-        default=None
-    )
+    parser.add_argument("--tickers", nargs="*", help="Tickers específicos (padrão: universo completo)", default=None)
     parser.add_argument("--start", default=START_DATE, help=f"Data inicial (padrão: {START_DATE})")
-    parser.add_argument("--end",   default=END_DATE,   help=f"Data final   (padrão: {END_DATE})")
+    parser.add_argument("--end", default=END_DATE, help=f"Data final   (padrão: {END_DATE})")
     parser.add_argument("--force", action="store_true", help="Forçar re-download ignorando cache")
     parser.add_argument("--benchmark", action="store_true", help="Incluir benchmark (IBOVESPA)")
     args = parser.parse_args()

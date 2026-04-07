@@ -43,9 +43,14 @@ _TICKER_RSS_SOURCES = [
         "url_template": "https://news.google.com/rss/search?q={ticker}+FII&hl=pt-BR&gl=BR&ceid=BR:pt-419",
     },
     {
-        "name": "Google News Finance",
+        "name": "Google News Finanças",
         "url_template": "https://news.google.com/rss/search?q={ticker}+fundo+imobiliario&hl=pt-BR&gl=BR&ceid=BR:pt-419",
     },
+    {
+        "name": "Yahoo Finance BR",
+        "url_template": "https://feeds.finance.yahoo.com/rss/2.0/headline?s={ticker}.SA&region=BR&lang=pt-BR",
+    },
+
 ]
 
 # Fontes gerais de noticias de FIIs (sem filtro por ticker)
@@ -75,8 +80,22 @@ _GENERAL_RSS_SOURCES = [
         "url": "https://br.investing.com/rss/news.rss",
         "filter_keywords": ["fii", "fundo imobiliário", "fundo imobiliario", "ifix", "reit"],
     },
+    {
+        "name": "Money Times",
+        "url": "https://www.moneytimes.com.br/feed/",
+        "filter_keywords": ["fii", "fundo imobiliário", "fundo imobiliario", "ifix", "imóveis"],
+    },
+    {
+        "name": "Seu Dinheiro",
+        "url": "https://www.seudinheiro.com/feed/",
+        "filter_keywords": ["fii", "fundo imobiliário", "fundo imobiliario", "dividendo", "ifix"],
+    },
+    {
+        "name": "InvestNews",
+        "url": "https://investnews.com.br/feed/",
+        "filter_keywords": ["fii", "fundo imobiliário", "fundo imobiliario", "ifix"],
+    },
 ]
-
 
 def _parse_date(entry: dict) -> str:
     """Extrai data de um entry RSS, com fallback."""
@@ -129,6 +148,7 @@ def _deduplicate_news(news: list[dict]) -> list[dict]:
 # API Publica
 # ---------------------------------------------------------------------------
 
+
 def fetch_fii_news(ticker: str, max_results: int = 10) -> list[dict]:
     """Busca noticias recentes de um FII via multiplas fontes RSS.
 
@@ -151,12 +171,14 @@ def fetch_fii_news(ticker: str, max_results: int = 10) -> list[dict]:
             url = source["url_template"].format(ticker=ticker_clean)
             feed = feedparser.parse(url)
             for entry in feed.entries[:8]:
-                all_news.append({
-                    "titulo": entry.title,
-                    "data": _parse_date(entry),
-                    "link": entry.get("link", ""),
-                    "fonte": source["name"],
-                })
+                all_news.append(
+                    {
+                        "titulo": entry.title,
+                        "data": _parse_date(entry),
+                        "link": entry.get("link", ""),
+                        "fonte": source["name"],
+                    }
+                )
         except Exception as e:
             logger.debug("Erro ao buscar %s de %s: %s", ticker_clean, source["name"], e)
 
@@ -166,12 +188,14 @@ def fetch_fii_news(ticker: str, max_results: int = 10) -> list[dict]:
             feed = feedparser.parse(source["url"])
             for entry in feed.entries[:20]:
                 if _entry_matches_ticker(entry, ticker_clean):
-                    all_news.append({
-                        "titulo": entry.title,
-                        "data": _parse_date(entry),
-                        "link": entry.get("link", ""),
-                        "fonte": source["name"],
-                    })
+                    all_news.append(
+                        {
+                            "titulo": entry.title,
+                            "data": _parse_date(entry),
+                            "link": entry.get("link", ""),
+                            "fonte": source["name"],
+                        }
+                    )
         except Exception as e:
             logger.debug("Erro ao buscar feed %s: %s", source["name"], e)
 
@@ -199,12 +223,14 @@ def fetch_market_news(max_results: int = 20) -> list[dict]:
         url = "https://news.google.com/rss/search?q=fundos+imobiliarios+FII&hl=pt-BR&gl=BR&ceid=BR:pt-419"
         feed = feedparser.parse(url)
         for entry in feed.entries[:10]:
-            all_news.append({
-                "titulo": entry.title,
-                "data": _parse_date(entry),
-                "link": entry.get("link", ""),
-                "fonte": "Google News",
-            })
+            all_news.append(
+                {
+                    "titulo": entry.title,
+                    "data": _parse_date(entry),
+                    "link": entry.get("link", ""),
+                    "fonte": "Google News",
+                }
+            )
     except Exception as e:
         logger.debug("Erro ao buscar Google News geral: %s", e)
 
@@ -215,12 +241,14 @@ def fetch_market_news(max_results: int = 20) -> list[dict]:
             keywords = source.get("filter_keywords", [])
             for entry in feed.entries[:10]:
                 if _entry_matches_keywords(entry, keywords):
-                    all_news.append({
-                        "titulo": entry.title,
-                        "data": _parse_date(entry),
-                        "link": entry.get("link", ""),
-                        "fonte": source["name"],
-                    })
+                    all_news.append(
+                        {
+                            "titulo": entry.title,
+                            "data": _parse_date(entry),
+                            "link": entry.get("link", ""),
+                            "fonte": source["name"],
+                        }
+                    )
         except Exception as e:
             logger.debug("Erro ao buscar feed %s: %s", source["name"], e)
 

@@ -17,7 +17,9 @@ def main():
     # 2. add-operation
     parser_operation = subparsers.add_parser("add-operation", help="Adiciona uma operação de compra ou venda")
     parser_operation.add_argument("ticker", type=str, help="Código do ativo (ex: BBSE3)")
-    parser_operation.add_argument("tipo", type=str, choices=["compra", "venda"], help="O tipo de operação (compra, venda)")
+    parser_operation.add_argument(
+        "tipo", type=str, choices=["compra", "venda"], help="O tipo de operação (compra, venda)"
+    )
     parser_operation.add_argument("quantidade", type=float, help="Quantidade de cotas movimentadas")
     parser_operation.add_argument("preco", type=float, help="Preço unitário pago ou recebido")
 
@@ -34,14 +36,17 @@ def main():
 
     # 6. backtest
     parser_bt = subparsers.add_parser("backtest", help="Roda backtest histórico e exibe métricas de performance")
-    parser_bt.add_argument("--tickers",    nargs="+", default=["MXRF11", "HGLG11"], help="Tickers da carteira")
-    parser_bt.add_argument("--weights",    nargs="+", type=float, default=[0.60, 0.40], help="Pesos (devem somar 1.0)")
-    parser_bt.add_argument("--aporte",     type=float, default=1000.0,  help="Aporte mensal em R$")
-    parser_bt.add_argument("--capital",    type=float, default=0.0,     help="Capital inicial em R$")
-    parser_bt.add_argument("--meses",      type=int,   default=24,      help="Número de meses (usa dados sintéticos)")
-    parser_bt.add_argument("--rebalance",  default="quarterly",
-                           choices=["monthly", "quarterly", "semiannual"],
-                           help="Frequência de rebalanceamento")
+    parser_bt.add_argument("--tickers", nargs="+", default=["MXRF11", "HGLG11"], help="Tickers da carteira")
+    parser_bt.add_argument("--weights", nargs="+", type=float, default=[0.60, 0.40], help="Pesos (devem somar 1.0)")
+    parser_bt.add_argument("--aporte", type=float, default=1000.0, help="Aporte mensal em R$")
+    parser_bt.add_argument("--capital", type=float, default=0.0, help="Capital inicial em R$")
+    parser_bt.add_argument("--meses", type=int, default=24, help="Número de meses (usa dados sintéticos)")
+    parser_bt.add_argument(
+        "--rebalance",
+        default="quarterly",
+        choices=["monthly", "quarterly", "semiannual"],
+        help="Frequência de rebalanceamento",
+    )
 
     args = parser.parse_args()
 
@@ -71,7 +76,7 @@ def main():
                 alocacao_alvo=alocacao_alvo,
                 aporte_mensal=aporte_mensal,
                 taxa_anual_esperada=taxa_anual_esperada,
-                renda_alvo_anual=renda_alvo_anual
+                renda_alvo_anual=renda_alvo_anual,
             )
             print(json.dumps(report, indent=2))
         except Exception as e:
@@ -89,8 +94,8 @@ def main():
         import random
 
         tickers = args.tickers
-        raw_w   = args.weights
-        meses   = args.meses
+        raw_w = args.weights
+        meses = args.meses
 
         if len(tickers) != len(raw_w):
             print("Erro: número de tickers e pesos deve ser igual.")
@@ -106,9 +111,9 @@ def main():
                 p.append(max(0.01, p[-1] * (1 + random.gauss(mu, sigma))))
             return p
 
-        price_series    = {t: _gen(10.0 * (i + 1), meses, seed=i) for i, t in enumerate(tickers)}
+        price_series = {t: _gen(10.0 * (i + 1), meses, seed=i) for i, t in enumerate(tickers)}
         dividend_series = {t: [price_series[t][j] * 0.007 for j in range(meses)] for t in tickers}
-        benchmark       = _gen(120000.0, meses, mu=0.005, sigma=0.05, seed=99)
+        benchmark = _gen(120000.0, meses, mu=0.005, sigma=0.05, seed=99)
 
         result = run_backtest(
             tickers=tickers,
@@ -124,6 +129,7 @@ def main():
 
     else:
         parser.print_help()
+
 
 if __name__ == "__main__":
     main()

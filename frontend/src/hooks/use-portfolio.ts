@@ -113,6 +113,94 @@ export function usePortfolio() {
   };
 }
 
+// ─── Watchlists ───────────────────────────────────────────────────────────────
+
+const WATCHLISTS_KEY = "alphacota_watchlists";
+
+export interface Watchlist {
+  id: string;
+  name: string;
+  tickers: string[];
+  createdAt: string;
+}
+
+function loadWatchlists(): Watchlist[] {
+  try {
+    const raw = localStorage.getItem(WATCHLISTS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return [
+    { id: "candidatos", name: "Candidatos", tickers: [], createdAt: new Date().toISOString() },
+    { id: "monitorando", name: "Monitorando", tickers: [], createdAt: new Date().toISOString() },
+  ];
+}
+
+function saveWatchlists(lists: Watchlist[]) {
+  localStorage.setItem(WATCHLISTS_KEY, JSON.stringify(lists));
+}
+
+export function useWatchlists() {
+  const [watchlists, setWatchlists] = useState<Watchlist[]>(loadWatchlists);
+
+  useEffect(() => {
+    saveWatchlists(watchlists);
+  }, [watchlists]);
+
+  const createList = useCallback((name: string) => {
+    const id = name.toLowerCase().replace(/\s+/g, "-") + "-" + Date.now();
+    setWatchlists(prev => [
+      ...prev,
+      { id, name, tickers: [], createdAt: new Date().toISOString() },
+    ]);
+    return id;
+  }, []);
+
+  const deleteList = useCallback((id: string) => {
+    setWatchlists(prev => prev.filter(l => l.id !== id));
+  }, []);
+
+  const renameList = useCallback((id: string, name: string) => {
+    setWatchlists(prev => prev.map(l => l.id === id ? { ...l, name } : l));
+  }, []);
+
+  const addTicker = useCallback((listId: string, ticker: string) => {
+    const t = ticker.toUpperCase();
+    setWatchlists(prev => prev.map(l =>
+      l.id === listId && !l.tickers.includes(t)
+        ? { ...l, tickers: [...l.tickers, t] }
+        : l
+    ));
+  }, []);
+
+  const removeTicker = useCallback((listId: string, ticker: string) => {
+    const t = ticker.toUpperCase();
+    setWatchlists(prev => prev.map(l =>
+      l.id === listId ? { ...l, tickers: l.tickers.filter(x => x !== t) } : l
+    ));
+  }, []);
+
+  const isInList = useCallback((listId: string, ticker: string) => {
+    const list = watchlists.find(l => l.id === listId);
+    return list?.tickers.includes(ticker.toUpperCase()) ?? false;
+  }, [watchlists]);
+
+  const getListsForTicker = useCallback((ticker: string) => {
+    const t = ticker.toUpperCase();
+    return watchlists.filter(l => l.tickers.includes(t)).map(l => l.name);
+  }, [watchlists]);
+
+  return {
+    watchlists,
+    createList,
+    deleteList,
+    renameList,
+    addTicker,
+    removeTicker,
+    isInList,
+    getListsForTicker,
+  };
+}
+
 /** Hook para gerenciar favoritos */
 export function useFavorites() {
   const [favorites, setFavorites] = useState<Set<string>>(loadFavorites);
