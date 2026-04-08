@@ -1,274 +1,71 @@
+<!-- RULEBOOK:START v5.3.0 — DO NOT EDIT BY HAND. Regenerated on `rulebook update`.
+     Put project-specific content in AGENTS.override.md or CLAUDE.local.md.
+     Anything outside the RULEBOOK:START/END sentinels is preserved across updates. -->
+
 # CLAUDE.md
 
-This file provides guidance to Claude Code when working with this repository.
+This project is managed by [@hivehub/rulebook](https://github.com/hivellm/rulebook).
+The authoritative rules come from the imports below. Claude Code loads all of them
+automatically at session start (see [Anthropic memory docs](https://code.claude.com/docs/en/memory#claude-md-imports)).
 
-## Project Overview
+## Project identity & live state
+<!-- @.rulebook/STATE.md (skipped — target file not present) -->
 
-This project uses @hivehub/rulebook standards. All code generation should follow the rules defined in AGENTS.md.
+## Core standards (team-shared, versioned)
+@AGENTS.md
 
-**Languages**: Python
-**Coverage Threshold**: 95%
+## Project-specific overrides (user-owned, survives `rulebook update`)
+@AGENTS.override.md
 
-## ⚠️ CRITICAL: File Editing Rules
+## Session scratchpad (human notes)
+@.rulebook/PLANS.md
 
-**MANDATORY**: When editing multiple files, you MUST edit files **SEQUENTIALLY**, one at a time.
+## Critical rules (highest precedence — apply on every turn)
 
-### Why Sequential Editing is Required
+1. **Read `AGENTS.md` and `AGENTS.override.md`** before making changes. These contain project-specific conventions that override generic guidance.
+2. **Never revert or discard uncommitted work** — fix forward. Treat the working tree as sacred; investigate before destructive operations.
+3. **Edit files sequentially**, not in parallel. When a task touches 3+ files, decompose into 1–2 file sub-tasks.
+4. **Run `check`/type-check before `test`** — diagnostic-first. Cheap diagnostics catch issues that expensive test suites miss or take longer to surface.
+5. **If a fix fails twice, escalate** — stop, research, or open a team. Do not retry the same approach a third time.
+6. **Prefer MCP tools** (`mcp__rulebook__*` and project-specific MCP servers) over shell commands when the equivalent tool exists.
+7. **Capture learnings**: at the end of significant work, save patterns and anti-patterns to `.rulebook/knowledge/` and insights to `.rulebook/learnings/`.
+8. **Never archive a task** without docs updated, tests written, and tests passing — the task tail enforces this structurally.
 
-The Edit tool uses exact string matching for replacements. When multiple files are edited in parallel:
-- The tool may fail to find the exact string in some files
-- Race conditions can cause partial or corrupted edits
-- Error recovery becomes impossible
+## Persistent memory
 
-### Correct Pattern
+This project uses the Rulebook MCP server for persistent memory across sessions.
 
-```
-✅ CORRECT (Sequential):
-1. Edit file A → Wait for confirmation
-2. Edit file B → Wait for confirmation
-3. Edit file C → Wait for confirmation
+- **Start of session**: `rulebook_memory_search` for relevant prior context.
+- **During work**: `rulebook_memory_save` for decisions, bugs, discoveries, user preferences.
+- **End of session**: `rulebook_session_end` to write a session summary.
 
-❌ WRONG (Parallel):
-1. Edit files A, B, C simultaneously → Failures likely
-```
+Memory is auto-captured for tool interactions (task create/update/archive, skill enable/disable). Manual saves are required for everything else worth remembering.
 
-### Implementation Rules
+## Knowledge base
 
-1. **NEVER call multiple Edit tools in parallel** for different files
-2. **ALWAYS wait for each edit to complete** before starting the next
-3. **Verify each edit succeeded** before proceeding
-4. **If an edit fails**, retry that specific edit before moving on
+Before implementing anything non-trivial:
 
-## ⚠️ CRITICAL: Test Implementation Rules
+- `rulebook_knowledge_list` — check existing patterns and anti-patterns.
+- `rulebook_learn_list` — review past learnings.
+- `rulebook_decision_list` — review architectural decisions.
 
-**MANDATORY**: You MUST write **complete, production-quality tests**. Never simplify or reduce test coverage.
+After implementing, capture at least one entry per task:
 
-### Forbidden Test Patterns
+- `rulebook_knowledge_add` for reusable patterns or anti-patterns to avoid.
+- `rulebook_learn_capture` for implementation insights that don't belong in code comments.
+- `rulebook_decision_create` for significant architectural choices.
 
-```typescript
-// ❌ NEVER do this - placeholder tests
-it('should work', () => {
-  expect(true).toBe(true);
-});
+## Task workflow
 
-// ❌ NEVER do this - skipped tests
-it.skip('should handle edge case', () => {});
+**MANDATORY: ALWAYS use the Rulebook MCP tools for task management.** Never create task directories or files manually — use `rulebook_task_create`, `rulebook_task_update`, `rulebook_task_archive`, `rulebook_task_list`, `rulebook_task_show`, `rulebook_task_validate`. These tools enforce naming conventions, mandatory tail items, phase structure, and metadata that manual file creation skips.
 
-// ❌ NEVER do this - incomplete assertions
-it('should return data', () => {
-  const result = getData();
-  expect(result).toBeDefined(); // Too weak!
-});
+1. `rulebook_task_list` to see pending work.
+2. `rulebook_task_create` to create new tasks — **never `mkdir` + `Write` manually**.
+3. Pick the **first unchecked item from the lowest-numbered phase** — never reorder.
+4. Read the task's `proposal.md` and `tasks.md` before touching code.
+5. Implement step by step. Run lint + type-check after each significant change.
+6. `rulebook_task_update` to change task status as you progress.
+7. Mark items `[x]` in `tasks.md` as you finish them.
+8. The mandatory tail (docs + tests + verify) is **not optional** — `rulebook_task_archive` will refuse to close the task otherwise.
 
-// ❌ NEVER do this - "simplify" by removing test cases
-// Original had 10 test cases, don't reduce to 3
-```
-
-### Required Test Patterns
-
-```typescript
-// ✅ CORRECT - complete test with proper assertions
-it('should return user data with correct structure', () => {
-  const result = getUserById(1);
-  expect(result).toEqual({
-    id: 1,
-    name: 'John Doe',
-    email: 'john@example.com',
-    createdAt: expect.any(Date),
-  });
-});
-
-// ✅ CORRECT - test edge cases and error paths
-it('should throw NotFoundError when user does not exist', () => {
-  expect(() => getUserById(999)).toThrow(NotFoundError);
-});
-```
-
-### Test Implementation Rules
-
-1. **NEVER simplify tests** - Implement the full, complete test as originally designed
-2. **NEVER skip test cases** - Every test case in the spec must be implemented
-3. **NEVER use placeholder assertions** - Each assertion must verify actual behavior
-4. **ALWAYS test error paths** - Exceptions, edge cases, and failure modes
-5. **ALWAYS maintain coverage** - Tests must achieve the project's coverage threshold (95%+)
-
-## Critical Rules
-
-1. **ALWAYS read AGENTS.md first** - Contains all project standards and patterns
-2. **Edit files sequentially** - One at a time, verify each edit
-3. **Write complete tests** - No placeholders, no simplifications
-4. **Tests required** - Minimum 95% coverage for all new code
-5. **Quality checks before committing**:
-   - Type check / Compiler check
-   - Lint (zero warnings)
-   - All tests passing
-   - Coverage threshold met
-6. **Documentation** - Update /docs/ when implementing features
-
-## Persistent Memory
-
-This project uses a **persistent memory system** via the Rulebook MCP server.
-Memory persists across sessions — use it to maintain context between conversations.
-
-**MANDATORY: You MUST actively use memory to preserve context across sessions.**
-
-### Auto-Capture
-
-Tool interactions (task create/update/archive, skill enable/disable) are auto-captured.
-But you MUST also manually save important context:
-
-- **Architectural decisions** — why you chose one approach over another
-- **Bug fixes** — root cause and resolution
-- **Discoveries** — codebase patterns, gotchas, constraints
-- **Feature implementations** — what was built, key design choices
-- **User preferences** — coding style, conventions, workflow preferences
-- **Session summaries** — what was accomplished, what's pending
-
-### Memory Commands (MCP)
-
-```
-rulebook_memory_save    — Save context (type, title, content, tags)
-rulebook_memory_search  — Search past context (query, mode: hybrid/bm25/vector)
-rulebook_memory_get     — Get full details by ID
-rulebook_memory_timeline — Chronological context around a memory
-rulebook_memory_stats   — Database stats
-rulebook_memory_cleanup — Evict old memories
-```
-
-### Session Workflow
-
-1. **Start of session**: `rulebook_memory_search` for relevant past context
-2. **During work**: Save decisions, bugs, discoveries as they happen
-3. **End of session**: Save a summary with `type: observation`
-
-## Commands
-
-```bash
-# Quality checks
-npm run type-check    # TypeScript type checking
-npm run lint          # Run linter
-npm test              # Run tests
-npm run build         # Build project
-
-# Task management (if using Rulebook)
-rulebook task list    # List tasks
-rulebook task show    # Show task details
-rulebook validate     # Validate project structure
-```
-
-## File Structure
-
-- `AGENTS.md` - Main project standards and AI directives (auto-generated by rulebook)
-- `.rulebook/` - Modular rule definitions and task specs
-- `/docs/` - Project documentation
-- `/tests/` - Test files
-
-When in doubt, check AGENTS.md for guidance.
-
-## Vectorizer — Busca Semântica no Código
-
-O projeto AlphaCota está indexado na collection **`alphacota`** do vectorizer local (`http://localhost:15002`).
-
-### Quando USAR o vectorizer (economiza tokens)
-
-| Situação | Query exemplo |
-|----------|--------------|
-| Entender como uma função funciona | `"como funciona o cálculo do Sharpe"` |
-| Encontrar onde algo está implementado | `"onde está o score_engine dividend yield"` |
-| Ver padrões de uso de um módulo | `"exemplos de uso do markowitz_engine"` |
-| Descobrir quais arquivos tocam uma feature | `"endpoints da API de portfolio"` |
-| Entender testes existentes antes de escrever novos | `"testes do fundamentals_scraper mock HTTP"` |
-
-### Quando NÃO usar (use Read/Grep direto)
-
-- Você já sabe o caminho exato do arquivo → use `Read`
-- Busca por string literal exata → use `Grep`
-- Edição cirúrgica em arquivo conhecido → use `Edit` direto
-- Arquivo pequeno e bem definido → use `Read`
-
-### Como buscar
-
-```
-# Busca semântica (conceitos, comportamentos)
-mcp__vectorizer__search_semantic  collection=alphacota  query="..."
-
-# Busca híbrida (semântica + palavras-chave) — padrão recomendado
-mcp__vectorizer__search_hybrid  collection=alphacota  query="..."
-
-# Busca em múltiplas collections
-mcp__vectorizer__multi_collection_search  collections=["alphacota"]  query="..."
-```
-
-### Fluxo obrigatório para tarefas de implementação
-
-```
-1. SEMPRE buscar no vectorizer ANTES de ler arquivos:
-   → search_hybrid("o que preciso entender sobre X")
-
-2. Se o resultado for suficiente → implementar direto (economiza tokens)
-
-3. Se precisar de detalhes → Read só os arquivos específicos retornados
-
-4. NUNCA ler toda a pasta com glob quando vectorizer pode responder
-```
-
-### Re-indexar após mudanças
-
-```bash
-# Após implementar novas features ou refatorar:
-python scripts/index_vectorizer.py --reset
-```
-
----
-
-## Agent System — Two Layers
-
-This project uses **two distinct agent systems**. Do not confuse them.
-
-### Layer 1 — `.agent/` (Antigravity Kit — Generic Framework)
-
-Generic, reusable agent definitions compatible with **any AI tool** (Claude Code, Gemini, Cursor, etc.).
-
-```
-.agent/
-├── agents/        # 20 specialist agents (orchestrator, backend-specialist, etc.)
-├── skills/        # 48 domain knowledge modules (python-patterns, api-patterns, etc.)
-├── workflows/     # 11 slash command procedures (/plan, /debug, /deploy, etc.)
-├── rules/
-│   ├── GEMINI.md  # Gemini-specific rules
-│   └── PYTHON.md  # Python coding rules for all IAs (pure functions, type hints)
-└── ARCHITECTURE.md
-```
-
-**Use when**: Running a generic task not specific to AlphaCota (e.g., invoking `backend-specialist` for a generic Python pattern question).
-
-### Layer 2 — `.claude/` (Claude Code Native — AlphaCota Specific)
-
-Claude Code's native configuration. These agents run directly in Claude Code sessions.
-
-```
-.claude/
-├── agents/
-│   ├── alphacota-orchestrator.md   ← Master coordinator (knows Phases 1-6)
-│   ├── alphacota-data-engineer.md  ← Phase 3: scrapers, data pipeline
-│   ├── alphacota-quant-engineer.md ← Phase 4/5: quant engines
-│   ├── alphacota-fullstack.md      ← FastAPI + React 18
-│   ├── alphacota-qa.md             ← 95% pytest coverage enforcer
-│   └── [18 generic Claude agents]  ← researcher, implementer, tester, etc.
-├── commands/      # 14 rulebook slash commands
-└── skills/        # 14 skill shortcuts
-```
-
-**Use when**: Working on AlphaCota features. Always prefer `alphacota-*` agents over generic ones for project tasks.
-
-### Which Agent to Use
-
-| Task | Agent |
-|------|-------|
-| Coordinating a multi-phase feature | `alphacota-orchestrator` |
-| Data scrapers, data_loader, universe | `alphacota-data-engineer` |
-| Score engine, backtest, markowitz | `alphacota-quant-engineer` |
-| FastAPI endpoint or React component | `alphacota-fullstack` |
-| Writing or fixing pytest tests | `alphacota-qa` |
-| Generic exploration / research | `researcher` |
-| Generic implementation | `implementer` |
+<!-- RULEBOOK:END -->

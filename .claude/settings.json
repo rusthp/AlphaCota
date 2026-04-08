@@ -39,5 +39,62 @@
       "Bash(python -m pytest tests/test_cli.py --cov=cli --cov-report=term-missing -q --tb=no)",
       "Bash(python -m pytest tests/test_alphacota_cli.py tests/test_cli.py --cov=cli --cov-report=term-missing -q --tb=short)"
     ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash B:/alphacota/.claude/hooks/on-compact-reinject.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash B:/alphacota/.claude/hooks/resume-from-handoff.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash B:/alphacota/.claude/hooks/check-context-and-handoff.sh"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash B:/alphacota/.claude/hooks/enforce-no-deferred.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash B:/alphacota/.claude/hooks/enforce-no-shortcuts.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash B:/alphacota/.claude/hooks/enforce-mcp-for-tasks.sh"
+          }
+        ]
+      }
+    ]
   }
 }
