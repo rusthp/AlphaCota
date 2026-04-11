@@ -31,6 +31,7 @@ from infra.database import get_portfolio_snapshots, create_user, get_user_by_ema
 from core.security import hash_password, verify_password, create_access_token, get_current_user
 from core.quant_engine import evaluate_company
 from core.macro_engine import get_macro_snapshot
+from core.prediction_engine import get_prediction_signal
 from core.fire_engine import calculate_years_to_fire, calculate_required_capital
 from core.momentum_engine import rank_by_momentum
 from core.cluster_engine import cluster_portfolio
@@ -629,6 +630,19 @@ def macro_snapshot():
         "ipca_source": raw.get("fonte_ipca", "bcb"),
         **raw,  # keep originals for MCP / other consumers
     }
+
+
+# ---------------------------------------------------------------------------
+# Prediction Markets — sinais macro via Polymarket
+# ---------------------------------------------------------------------------
+@app.get("/api/prediction")
+def prediction_signal():
+    """Retorna sinal macro de mercados de previsão (Polymarket) para FIIs.
+
+    Score 0-100: >65 = bullish, <35 = bearish, restante = neutro.
+    Cache local de 6h para evitar chamadas excessivas.
+    """
+    return get_prediction_signal()
 
 
 # ---------------------------------------------------------------------------
