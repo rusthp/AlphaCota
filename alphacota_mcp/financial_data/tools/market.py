@@ -156,3 +156,35 @@ def register_market_tools(mcp: Any) -> None:
 
         results.sort(key=lambda x: x["score"], reverse=True)
         return {"fiis": results, "total": len(results)}
+
+    @mcp.tool()
+    def get_polymarket_alpha_wallets(limit: int = 10) -> dict:
+        """Retorna ranking de carteiras alpha no Polymarket por taxa de acerto e recência.
+
+        Lê endereços da variável de ambiente POLYMARKET_WATCH_WALLETS (separados por vírgula).
+        Cada carteira é avaliada por win_rate, recência (decay exponencial 30 dias) e diversidade.
+
+        Args:
+            limit: Número máximo de carteiras a retornar (padrão: 10).
+
+        Returns:
+            dict com lista de wallets ranqueadas e seus scores.
+        """
+        from core.polymarket_alpha_detector import detect_top_alpha_wallets
+
+        wallets = detect_top_alpha_wallets(limit=limit)
+        return {
+            "wallets": [
+                {
+                    "address": w.address,
+                    "alpha_score": w.alpha_score,
+                    "win_rate": round(w.win_rate * 100, 1),
+                    "total_trades": w.total_trades,
+                    "recency_weight": w.recency_weight,
+                    "diversity_score": w.diversity_score,
+                    "preferred_categories": w.preferred_categories,
+                }
+                for w in wallets
+            ],
+            "total": len(wallets),
+        }
