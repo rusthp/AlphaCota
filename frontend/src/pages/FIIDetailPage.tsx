@@ -15,6 +15,7 @@ import {
 } from "recharts";
 import { useFIIDetail, useNews, useScoreHistory } from "@/hooks/use-api";
 import { fetchUpcomingDividends, fetchAIAnalysis, type UpcomingDividendEvent, type AIAnalysisResult } from "@/services/api";
+import DeepAnalysisPanel from "@/components/DeepAnalysisPanel";
 
 const FAV_KEY = "alphacota_favourites";
 
@@ -571,7 +572,10 @@ export default function FIIDetailPage() {
         </Card>
       )}
 
-      {/* AI Analysis */}
+      {/* Deep Multi-Agent Analysis */}
+      <DeepAnalysisPanel ticker={fii.ticker} />
+
+      {/* AI Analysis (sentimento simples) */}
       <Card className="bg-card border-border/30">
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">

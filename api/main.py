@@ -37,6 +37,7 @@ from core.momentum_engine import rank_by_momentum
 from core.cluster_engine import cluster_portfolio
 from core.stress_engine import run_stress_suite
 from core.ai_engine import analyze_fii_news
+from core.fii_agent_pipeline import run_deep_analysis
 from core.correlation_engine import build_correlation_matrix
 from data.universe import get_universe, get_tickers, get_sector_map, get_sectors_summary
 from data.fundamentals_scraper import fetch_fundamentals, fetch_fundamentals_bulk
@@ -139,6 +140,9 @@ class AIAnalyzeRequest(BaseModel):
 
 class AIBatchRequest(BaseModel):
     tickers: list[str]
+    api_key: Optional[str] = None
+
+class DeepAnalysisRequest(BaseModel):
     api_key: Optional[str] = None
 
 
@@ -1019,6 +1023,71 @@ def get_ai_sentiment_trend(ticker: str, limit: int = 5):
     trend = get_sentiment_trend(ticker.upper(), limit)
     return {"ticker": ticker.upper(), "trend": trend}
 
+
+@app.post("/api/ai/deep-analysis/{ticker}")
+def ai_deep_analysis(ticker: str, req: DeepAnalysisRequest = DeepAnalysisRequest()):
+    """
+    Pipeline multi-agente de análise profunda de um FII.
+
+    Executa 5 agentes em sequência (Macro → Fundamental → Risk → Persona → Decision)
+    e retorna raciocínio auditável por etapa + recomendação final BUY/HOLD/SELL.
+    """
+    ticker = ticker.upper()
+
+    # --- montar fii_data (mesmo formato que /api/fii/{ticker}) ---
+    fund = fetch_fundamentals(ticker)
+
+    try:
+        price, _ = load_last_price(ticker)
+    except Exception:
+        price = 0.0
+
+    try:
+        dividend, _ = load_monthly_dividend(ticker)
+    except Exception:
+        dividend = 0.0
+
+    score_data = {
+        "pvp": fund.get("pvp", 1.0),
+        "debt_ratio": fund.get("debt_ratio", 0.3),
+        "dividend_yield": fund.get("dividend_yield", 0.08),
+        "dividend_consistency": fund.get("dividend_consistency", 0.5),
+        "vacancy_rate": fund.get("vacancia", 0.05),
+        "daily_liquidity": fund.get("liquidez_diaria", 5_000_000),
+    }
+    try:
+        score_breakdown = calculate_fii_score(score_data)
+    except Exception:
+        score_breakdown = {"total": 0}
+
+    sector_map = get_sector_map()
+
+    fii_data = {
+        "ticker": ticker,
+        "segment": sector_map.get(ticker, "Outros"),
+        "price": round(price, 2),
+        "dividend_monthly": round(dividend, 4),
+        "fundamentals": fund,
+        "score_breakdown": score_breakdown,
+        "vol_30d": None,
+    }
+
+    # --- macro ---
+    try:
+        macro = get_macro_snapshot()
+    except Exception:
+        macro = {"selic_anual": 10.75, "cdi_anual": 10.65, "ipca_anual": 4.83}
+
+    # --- notícias ---
+    try:
+        news = fetch_fii_news(ticker, max_results=5)
+    except Exception:
+        news = []
+
+    result = run_deep_analysis(ticker, fii_data, macro, news, api_key=req.api_key)
+    return result
+
+
 @app.get("/api/fiis/alerts")
 def score_alerts(tickers: str, threshold: float = 10.0):
     """Retorna alertas se o score de algum dos ativos caiu abruptamente."""
@@ -1058,3 +1127,692 @@ def portfolio_tearsheet(tickers: str, weights: str):
         return HTMLResponse(content=html_content)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro interno ao renderizar tearsheet: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Polymarket trading routes
+# ---------------------------------------------------------------------------
+
+import time as _time_mod
+
+_pm_loop_start: float | None = None
+_pm_loop_mode: str = "paper"
+
+
+@app.get("/api/polymarket/status")
+def polymarket_status():
+    """Return Polymarket loop running status, mode, and uptime."""
+    from pathlib import Path
+    kill_active = Path("data/POLYMARKET_KILL").exists()
+    uptime = round(_time_mod.time() - _pm_loop_start, 1) if _pm_loop_start else None
+    return {
+        "running": _pm_loop_start is not None,
+        "mode": _pm_loop_mode,
+        "uptime_seconds": uptime,
+        "kill_switch_active": kill_active,
+    }
+
+
+@app.get("/api/polymarket/positions")
+def polymarket_positions():
+    """Return all open Polymarket positions with unrealized PnL."""
+    from core.polymarket_ledger import init_db
+    conn = init_db()
+    rows = conn.execute(
+        "SELECT * FROM pm_positions ORDER BY opened_at DESC"
+    ).fetchall()
+    conn.close()
+    return {
+        "positions": [
+            {
+                "position_id": row["position_id"],
+                "condition_id": row["condition_id"],
+                "direction": row["direction"],
+                "size_usd": round(float(row["size_usd"]), 2),
+                "entry_price": round(float(row["entry_price"]), 4),
+                "current_price": round(float(row["current_price"]), 4),
+                "unrealized_pnl": round(float(row["unrealized_pnl"]), 2),
+                "mode": row["mode"],
+                "opened_at": float(row["opened_at"]),
+            }
+            for row in rows
+        ],
+        "total": len(rows),
+    }
+
+
+@app.get("/api/polymarket/pnl")
+def polymarket_pnl():
+    """Return realized PnL history from pm_pnl_snapshots."""
+    from core.polymarket_ledger import init_db
+    conn = init_db()
+    rows = conn.execute(
+        "SELECT * FROM pm_pnl_snapshots ORDER BY snapshot_date DESC LIMIT 90"
+    ).fetchall()
+    conn.close()
+    return {
+        "snapshots": [
+            {
+                "date": row["snapshot_date"],
+                "equity_usd": round(float(row["equity_usd"]), 2),
+                "open_positions": int(row["open_positions"]),
+                "daily_pnl": round(float(row["daily_pnl"]), 2),
+                "mode": row["mode"],
+            }
+            for row in rows
+        ],
+        "total": len(rows),
+    }
+
+
+@app.post("/api/polymarket/kill")
+def polymarket_kill(_: dict = Depends(get_current_user)):
+    """Create the kill-switch file to halt the trading loop (auth required)."""
+    from pathlib import Path
+    kill_path = Path("data/POLYMARKET_KILL")
+    kill_path.parent.mkdir(parents=True, exist_ok=True)
+    kill_path.touch()
+    return {"killed": True, "message": "Kill-switch activated. Loop will stop at next cycle."}
+
+
+@app.get("/api/polymarket/live-status")
+def polymarket_live_status():
+    """Return wallet USDC balance, daily PnL, open positions, mode, and preflight timestamp."""
+    from core.polymarket_client import get_wallet_health
+    from core.polymarket_ledger import init_db
+    from datetime import date
+
+    conn = init_db()
+    today = date.today().isoformat()
+
+    open_count = conn.execute("SELECT COUNT(*) FROM pm_positions").fetchone()[0]
+    daily_pnl = conn.execute(
+        "SELECT COALESCE(SUM(realized_pnl), 0) FROM pm_trades "
+        "WHERE date(closed_at, 'unixepoch') = ?",
+        (today,),
+    ).fetchone()[0]
+    conn.close()
+
+    wallet = get_wallet_health()
+    return {
+        "mode": _pm_loop_mode,
+        "usdc_balance": round(wallet.usdc_balance, 2),
+        "daily_realized_pnl": round(float(daily_pnl), 2),
+        "open_positions": int(open_count),
+        "wallet_healthy": wallet.is_healthy,
+        "preflight_last_run": None,
+    }
+
+
+@app.get("/api/polymarket/orders")
+def polymarket_orders(limit: int = 50):
+    """Return the last N orders from the ledger, enriched with market question."""
+    import httpx as _httpx
+    from core.polymarket_ledger import init_db
+    conn = init_db()
+    rows = conn.execute(
+        "SELECT * FROM pm_orders ORDER BY created_at DESC LIMIT ?", (limit,)
+    ).fetchall()
+    conn.close()
+
+    # Fetch market questions in batch (unique condition_ids only)
+    condition_ids = list({row["condition_id"] for row in rows if row["condition_id"]})
+    questions: dict[str, str] = {}
+    for cid in condition_ids:
+        try:
+            r = _httpx.get(f"https://clob.polymarket.com/markets/{cid}", timeout=5)
+            if r.is_success:
+                questions[cid] = r.json().get("question", "")
+        except Exception:
+            pass
+
+    return {
+        "orders": [
+            {
+                "order_id": row["client_order_id"],
+                "market_id": row["condition_id"],
+                "question": questions.get(row["condition_id"], ""),
+                "direction": row["direction"],
+                "size_usd": round(float(row["size_usd"]), 2),
+                "fill_price": round(float(row["fill_price"]), 4) if row["fill_price"] else None,
+                "status": row["status"],
+                "mode": row["mode"],
+                "created_at": float(row["created_at"]),
+            }
+            for row in rows
+        ],
+        "total": len(rows),
+    }
+
+
+@app.get("/api/polymarket/price-history/{condition_id}")
+def polymarket_price_history(condition_id: str, interval: str = "1d"):
+    """Fetch probability evolution for all outcomes of a market.
+
+    Calls CLOB prices-history for each token_id in the market, returning
+    a list of {timestamp, outcome, price} rows suitable for recharts LineChart.
+    interval: max (all time), 1d, 1w, 1m, 6m, 1y
+    """
+    import httpx as _httpx
+
+    _CLOB_BASE = "https://clob.polymarket.com"
+    _INTERVAL_MAP = {"max": "max", "1d": "1d", "1w": "1w", "1m": "1m", "6m": "6m", "1y": "1y"}
+    clob_interval = _INTERVAL_MAP.get(interval, "max")
+
+    try:
+        mkt_resp = _httpx.get(f"{_CLOB_BASE}/markets/{condition_id}", timeout=10)
+        if not mkt_resp.is_success:
+            raise HTTPException(status_code=502, detail=f"CLOB error {mkt_resp.status_code}")
+        mkt = mkt_resp.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    question = mkt.get("question", "")
+    tokens = mkt.get("tokens", [])  # [{token_id, outcome}, ...]
+    if not tokens:
+        # fallback: parse from outcomePrices / outcomes
+        outcomes = mkt.get("outcomes", [])
+        if isinstance(outcomes, str):
+            import json as _json
+            try:
+                outcomes = _json.loads(outcomes)
+            except Exception:
+                outcomes = []
+        tokens = [{"token_id": "", "outcome": o} for o in outcomes]
+
+    series: list[dict] = []
+    timestamps_set: set[int] = set()
+    outcome_data: dict[str, dict[int, float]] = {}  # outcome -> {ts -> price}
+
+    for tok in tokens:
+        token_id = tok.get("token_id", "")
+        outcome = tok.get("outcome", "?")
+        if not token_id:
+            continue
+        try:
+            hist_resp = _httpx.get(
+                f"{_CLOB_BASE}/prices-history",
+                params={"market": token_id, "interval": clob_interval},
+                timeout=15,
+            )
+            if not hist_resp.is_success:
+                continue
+            hist = hist_resp.json()
+            history = hist.get("history", [])
+            ts_prices: dict[int, float] = {}
+            for point in history:
+                ts = int(point.get("t", 0))
+                price = float(point.get("p", 0.0))
+                ts_prices[ts] = price
+                timestamps_set.add(ts)
+            outcome_data[outcome] = ts_prices
+        except Exception:
+            pass
+
+    # Build merged rows: [{ts, outcome1_price, outcome2_price, ...}]
+    all_ts = sorted(timestamps_set)
+    raw_series: list[dict] = []
+    for ts in all_ts:
+        row: dict = {"ts": ts}
+        for outcome, ts_map in outcome_data.items():
+            row[outcome] = round(ts_map.get(ts, 0.0) * 100, 2)  # convert to %
+        raw_series.append(row)
+
+    # Downsample to max 300 points using LTTB-style bucket sampling
+    # This keeps shape of the curve without flooding the frontend with 4000+ points
+    _MAX_POINTS = 300
+    if len(raw_series) > _MAX_POINTS:
+        step = len(raw_series) / _MAX_POINTS
+        outcome_keys = list(outcome_data.keys())
+        sampled: list[dict] = []
+        for i in range(_MAX_POINTS):
+            # Take the point with the largest change within each bucket
+            lo = int(i * step)
+            hi = min(int((i + 1) * step), len(raw_series))
+            bucket = raw_series[lo:hi]
+            if not bucket:
+                continue
+            if len(bucket) == 1:
+                sampled.append(bucket[0])
+                continue
+            # Pick point with max absolute change from bucket start for any outcome
+            ref = bucket[0]
+            best = bucket[0]
+            best_delta = 0.0
+            for pt in bucket[1:]:
+                delta = max(abs(pt.get(k, 0) - ref.get(k, 0)) for k in outcome_keys)
+                if delta >= best_delta:
+                    best_delta = delta
+                    best = pt
+            sampled.append(best)
+        series = sampled
+    else:
+        series = raw_series
+
+    all_outcomes = [tok.get("outcome", "?") for tok in tokens if tok.get("token_id")]
+
+    # For binary markets (Yes/No that sum to 100%), show only the first outcome.
+    # Showing both creates a mirror-image mess — the second line adds no information.
+    # For multi-outcome markets (3+ candidates, etc.) show all lines.
+    is_binary = (
+        len(all_outcomes) == 2
+        and set(o.lower() for o in all_outcomes) <= {"yes", "no"}
+    )
+    if is_binary:
+        primary = all_outcomes[0]
+        display_outcomes = [primary]
+        series = [{k: v for k, v in row.items() if k in ("ts", primary)} for row in series]
+    else:
+        display_outcomes = all_outcomes
+
+    return {
+        "condition_id": condition_id,
+        "question": question,
+        "outcomes": display_outcomes,
+        "series": series,
+    }
+
+
+@app.get("/api/polymarket/trending-markets")
+def polymarket_trending_markets(limit: int = 10):
+    """Return top active markets by weekly volume from gamma-api."""
+    import httpx as _httpx
+
+    _GAMMA = "https://gamma-api.polymarket.com"
+    try:
+        resp = _httpx.get(
+            f"{_GAMMA}/markets",
+            params={
+                "active": "true",
+                "limit": limit,
+                "order": "volume1wk",
+                "ascending": "false",
+                "enableOrderBook": "true",
+            },
+            timeout=12,
+        )
+        if not resp.is_success:
+            raise HTTPException(status_code=502, detail=f"gamma-api {resp.status_code}")
+        markets = resp.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    result = []
+    for m in markets:
+        cid = m.get("conditionId", "")
+        if not cid:
+            continue
+        try:
+            outcomes = m.get("outcomes", "[]")
+            if isinstance(outcomes, str):
+                import json as _json
+                outcomes = _json.loads(outcomes)
+            prices_raw = m.get("outcomePrices", "[]")
+            if isinstance(prices_raw, str):
+                import json as _json
+                prices_raw = _json.loads(prices_raw)
+            prices = [round(float(p) * 100, 1) for p in prices_raw]
+        except Exception:
+            outcomes = []
+            prices = []
+
+        result.append({
+            "condition_id": cid,
+            "question": m.get("question", ""),
+            "volume_1wk": m.get("volume1wkClob", 0),
+            "outcomes": outcomes,
+            "prices": prices,
+        })
+
+    return {"markets": result}
+
+
+@app.get("/api/polymarket/calibration")
+def polymarket_calibration(lookback_days: int = 90):
+    """Return calibration stats: Brier score, win rate, category breakdown, reliability bins, weight history."""
+    from core.polymarket_calibration import compute_calibration_stats, reliability_bins
+    from core.polymarket_ledger import init_db
+
+    conn = init_db()
+    try:
+        report = compute_calibration_stats(conn, lookback_days=lookback_days)
+        bins = reliability_bins(conn, lookback_days=lookback_days)
+
+        weight_history = conn.execute(
+            """
+            SELECT tuned_at, trigger_markets, weights_before, weights_after,
+                   brier_score, win_rate
+            FROM pm_weight_history
+            ORDER BY tuned_at DESC
+            LIMIT 5
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+
+    import json as _json
+    return {
+        "overall_brier": report.overall_brier,
+        "overall_win_rate": report.overall_win_rate,
+        "total_resolved": report.total_resolved,
+        "lookback_days": report.lookback_days,
+        "generated_at": report.generated_at,
+        "categories": [
+            {
+                "category": c.category,
+                "brier_score": c.brier_score,
+                "win_rate": c.win_rate,
+                "mean_edge": c.mean_edge,
+                "resolved_count": c.resolved_count,
+            }
+            for c in report.categories
+        ],
+        "reliability_bins": [
+            {
+                "bin_low": b.bin_low,
+                "bin_high": b.bin_high,
+                "predicted_prob": b.predicted_prob,
+                "actual_win_rate": b.actual_win_rate,
+                "count": b.count,
+            }
+            for b in bins
+        ],
+        "weight_history": [
+            {
+                "tuned_at": float(row["tuned_at"]),
+                "trigger_markets": row["trigger_markets"],
+                "weights_before": _json.loads(row["weights_before"]),
+                "weights_after": _json.loads(row["weights_after"]),
+                "brier_score": round(float(row["brier_score"]), 6),
+                "win_rate": round(float(row["win_rate"]), 4),
+            }
+            for row in weight_history
+        ],
+    }
+
+
+@app.get("/api/polymarket/wallets")
+def polymarket_wallets():
+    """Return ranked wallet list with alpha scores and rank changes."""
+    import sqlite3 as _sqlite3
+    from pathlib import Path as _Path
+    from core.polymarket_ledger import init_db
+    from core.polymarket_wallet_ranker import WalletRank, rerank_wallets
+
+    # Build watchlist from wallet_cache.db (distinct addresses ever tracked)
+    _cache_db = _Path("data/wallet_cache.db")
+    watchlist: list[str] = []
+    if _cache_db.exists():
+        try:
+            _wconn = _sqlite3.connect(str(_cache_db))
+            rows = _wconn.execute("SELECT DISTINCT address FROM wallet_positions").fetchall()
+            watchlist = [r[0] for r in rows]
+            _wconn.close()
+        except Exception:
+            pass
+
+    class _Tracker:
+        pass
+
+    _tracker = _Tracker()
+    _tracker.watchlist = watchlist  # type: ignore[attr-defined]
+
+    conn = init_db()
+    try:
+        rankings: list[WalletRank] = rerank_wallets(conn, _tracker)
+    finally:
+        conn.close()
+
+    return {
+        "wallets": [
+            {
+                "address": r.address,
+                "alpha_score": r.alpha_score,
+                "win_rate": r.win_rate,
+                "resolved_count": r.resolved_count,
+                "last_active": r.last_active,
+                "rank_change": r.rank_change,
+            }
+            for r in rankings
+        ],
+        "total": len(rankings),
+    }
+
+
+@app.post("/api/polymarket/wallets/seed")
+def polymarket_wallets_seed(markets: int = 100, min_size: float = 5.0):
+    """Run wallet seeder in background thread and return immediately."""
+    import threading
+    from core.polymarket_wallet_seeder import seed_wallets
+
+    def _run():
+        try:
+            seed_wallets(wallets=markets, min_size_usd=min_size)
+        except Exception as exc:
+            import logging as _logging
+            _logging.getLogger("alphacota").warning("wallet seeder background error: %s", exc)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return {"status": "started", "markets": markets, "min_size_usd": min_size}
+
+
+class IngestPosition(BaseModel):
+    address: str
+    market_id: str
+    outcome: str
+    side: str
+    size_usd: float
+    pnl: float
+    closed_at: float = 0.0
+
+
+class IngestPayload(BaseModel):
+    positions: list[IngestPosition]
+    worker_id: str = "remote"
+
+
+@app.post("/api/polymarket/wallets/ingest")
+def polymarket_wallets_ingest(payload: IngestPayload):
+    """Receive resolved positions from a remote worker and upsert into local wallet_cache.db.
+
+    Called by the VM worker after collecting wallet data. No auth required since
+    it only writes to the local SQLite cache — no funds involved.
+    """
+    from core.polymarket_wallet_seeder import _get_cache_conn, _upsert_position
+
+    conn = _get_cache_conn()
+    saved = 0
+    errors = 0
+    for pos in payload.positions:
+        try:
+            _upsert_position(
+                conn,
+                address=pos.address,
+                market_id=pos.market_id,
+                outcome=pos.outcome,
+                side=pos.side,
+                size_usd=pos.size_usd,
+                pnl=pos.pnl,
+                closed_at=pos.closed_at,
+            )
+            saved += 1
+        except Exception as exc:
+            import logging as _log
+            _log.getLogger("alphacota").warning("ingest: %s/%s: %s", pos.address[:12], pos.market_id[:12], exc)
+            errors += 1
+
+    # Count eligible wallets after ingest
+    try:
+        row = conn.execute("""
+            SELECT COUNT(*) FROM (
+                SELECT address FROM wallet_positions
+                WHERE resolved = 1
+                GROUP BY address HAVING COUNT(*) >= 5
+            )
+        """).fetchone()
+        eligible = int(row[0]) if row else 0
+    except Exception:
+        eligible = -1
+
+    conn.close()
+    import logging as _log
+    _log.getLogger("alphacota").info("ingest from worker=%s: %d saved, %d errors, %d eligible",
+                payload.worker_id, saved, errors, eligible)
+    return {"saved": saved, "errors": errors, "eligible": eligible}
+
+
+@app.get("/api/polymarket/wallets/{address}/simulate")
+def polymarket_wallet_simulate(address: str, bankroll: float = 100.0):
+    """Simulate copying a wallet: replay its resolved positions with proportional sizing.
+
+    For each resolved position, assume we allocated bankroll * kelly_fraction.
+    Returns equity curve, total PnL, win rate, and per-trade list.
+    """
+    import sqlite3 as _sqlite3
+    from pathlib import Path as _Path
+
+    _cache_db = _Path("data/wallet_cache.db")
+    if not _cache_db.exists():
+        raise HTTPException(status_code=404, detail="No wallet data. Run seeder first.")
+
+    conn = _sqlite3.connect(str(_cache_db))
+    conn.row_factory = _sqlite3.Row
+    rows = conn.execute(
+        """
+        SELECT market_id, outcome, side, size_usd, pnl, closed_at
+        FROM wallet_positions
+        WHERE address = ? AND resolved = 1
+        ORDER BY closed_at ASC
+        """,
+        (address.lower(),),
+    ).fetchall()
+    conn.close()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="Wallet not found or no resolved positions.")
+
+    trades = []
+    equity = bankroll
+    equity_curve = []
+    wins = 0
+    total_invested = 0.0
+
+    for row in rows:
+        original_size = float(row["size_usd"])
+        original_pnl = float(row["pnl"])
+        if original_size <= 0:
+            continue
+
+        # Scale position proportionally: if wallet bet X, we bet bankroll * (X / bankroll_assumed)
+        # Use Kelly-proportional scaling: our bet = bankroll * (original_size / 500)
+        # Cap at 10% of current equity
+        fraction = min(original_size / 500.0, 0.10)
+        bet_size = round(equity * fraction, 2)
+        if bet_size < 0.01:
+            continue
+
+        # PnL ratio from original trade
+        pnl_ratio = original_pnl / original_size
+        our_pnl = round(bet_size * pnl_ratio, 4)
+
+        equity += our_pnl
+        total_invested += bet_size
+        if our_pnl > 0:
+            wins += 1
+
+        from datetime import datetime, timezone as _tz
+        closed_dt = datetime.fromtimestamp(float(row["closed_at"]), tz=_tz.utc)
+
+        trades.append({
+            "date": closed_dt.strftime("%Y-%m-%d"),
+            "market_id": row["market_id"][:14] + "…",
+            "outcome": row["outcome"],
+            "side": row["side"],
+            "bet_usd": bet_size,
+            "pnl": our_pnl,
+            "equity": round(equity, 2),
+        })
+        equity_curve.append({"date": closed_dt.strftime("%m/%d"), "equity": round(equity, 2)})
+
+    total_pnl = round(equity - bankroll, 2)
+    win_rate = round(wins / len(trades), 4) if trades else 0.0
+    roi = round(total_pnl / bankroll * 100, 2)
+
+    return {
+        "address": address,
+        "bankroll": bankroll,
+        "total_trades": len(trades),
+        "wins": wins,
+        "win_rate": win_rate,
+        "total_pnl": total_pnl,
+        "final_equity": round(equity, 2),
+        "roi_pct": roi,
+        "equity_curve": equity_curve[-90:],  # last 90 data points
+        "trades": trades[-50:],              # last 50 trades
+    }
+
+
+@app.post("/api/polymarket/wallets/{address}/follow")
+def polymarket_wallet_follow(address: str):
+    """Mark a wallet as followed — the trading loop will consider its copy signals."""
+    import sqlite3 as _sqlite3
+    from pathlib import Path as _Path
+
+    _cache_db = _Path("data/wallet_cache.db")
+    conn = _sqlite3.connect(str(_cache_db))
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS followed_wallets (
+            address TEXT PRIMARY KEY,
+            followed_at REAL NOT NULL
+        )
+    """)
+    import time as _time
+    conn.execute(
+        "INSERT OR IGNORE INTO followed_wallets (address, followed_at) VALUES (?, ?)",
+        (address.lower(), _time.time()),
+    )
+    conn.commit()
+    conn.close()
+    return {"status": "following", "address": address}
+
+
+@app.delete("/api/polymarket/wallets/{address}/follow")
+def polymarket_wallet_unfollow(address: str):
+    """Unfollow a wallet."""
+    import sqlite3 as _sqlite3
+    from pathlib import Path as _Path
+
+    _cache_db = _Path("data/wallet_cache.db")
+    if not _cache_db.exists():
+        return {"status": "not_following", "address": address}
+    conn = _sqlite3.connect(str(_cache_db))
+    conn.execute("DELETE FROM followed_wallets WHERE address = ?", (address.lower(),))
+    conn.commit()
+    conn.close()
+    return {"status": "unfollowed", "address": address}
+
+
+@app.get("/api/polymarket/wallets/followed")
+def polymarket_wallets_followed():
+    """Return list of followed wallet addresses."""
+    import sqlite3 as _sqlite3
+    from pathlib import Path as _Path
+
+    _cache_db = _Path("data/wallet_cache.db")
+    if not _cache_db.exists():
+        return {"followed": []}
+    try:
+        conn = _sqlite3.connect(str(_cache_db))
+        rows = conn.execute(
+            "SELECT address, followed_at FROM followed_wallets ORDER BY followed_at DESC"
+        ).fetchall()
+        conn.close()
+        return {"followed": [{"address": r[0], "followed_at": r[1]} for r in rows]}
+    except Exception:
+        return {"followed": []}

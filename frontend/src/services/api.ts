@@ -133,6 +133,78 @@ export interface AIAnalysisResult {
   cached?: boolean;
 }
 
+export interface DeepAnalysisMacro {
+  ciclo_juros: string;
+  impacto_fii: string;
+  spread_atrativo: boolean;
+  dy_real: number;
+  spread_cdi: number;
+  yield_minimo_aceitavel: number;
+  contexto: string;
+  alerta: string | null;
+}
+
+export interface DeepAnalysisFundamental {
+  qualidade: string;
+  pvp_status: string;
+  dy_sustentavel: boolean;
+  ddm_preco_justo: number | null;
+  ddm_upside_pct: number | null;
+  pontos_fortes: string[];
+  pontos_fracos: string[];
+  resumo: string;
+}
+
+export interface DeepAnalysisRisk {
+  nivel_risco: string;
+  risco_liquidez: string;
+  risco_credito: string;
+  risco_vacancia: string;
+  risco_juros: string;
+  var_estimado_5pct: string;
+  cenario_stress: string;
+  resumo_risco: string;
+}
+
+export interface DeepAnalysisPersona {
+  opiniao: "comprar" | "aguardar" | "evitar";
+  raciocinio: string;
+  condicao_entrada: string;
+}
+
+export interface DeepAnalysisDecision {
+  recomendacao: "COMPRAR" | "AGUARDAR" | "EVITAR";
+  forca_sinal: "forte" | "moderado" | "fraco";
+  preco_entrada_ideal: number | null;
+  preco_alvo_12m: number | null;
+  stop_sugerido: number | null;
+  dy_alvo_minimo: number;
+  tese: string;
+  gatilhos_compra: string[];
+  gatilhos_saida: string[];
+  rating: "A" | "B" | "C" | "D" | "F";
+}
+
+export interface DeepAnalysisResult {
+  success: boolean;
+  error?: string;
+  ticker: string;
+  macro_analysis: DeepAnalysisMacro;
+  fundamental_analysis: DeepAnalysisFundamental;
+  risk_analysis: DeepAnalysisRisk;
+  persona_analysis: {
+    barsi: DeepAnalysisPersona;
+    crescimento: DeepAnalysisPersona;
+  };
+  final_decision: DeepAnalysisDecision;
+  pipeline_meta: {
+    agents_run: number;
+    errors: string[];
+    timings_s: Record<string, number>;
+    total_s: number;
+  };
+}
+
 export interface AIBatchResponse {
   success: boolean;
   results: AIAnalysisResult[];
@@ -241,6 +313,14 @@ export function fetchAIAnalysis(ticker: string, apiKey?: string): Promise<AIAnal
   return fetchJSON("/api/ai/analyze", {
     method: "POST",
     body: JSON.stringify({ ticker, api_key: apiKey }),
+  });
+}
+
+/** Deep pipeline analysis — 5 agents (Macro → Fundamental → Risk → Persona → Decision) */
+export function fetchDeepAnalysis(ticker: string, apiKey?: string): Promise<DeepAnalysisResult> {
+  return fetchJSON(`/api/ai/deep-analysis/${ticker.toUpperCase()}`, {
+    method: "POST",
+    body: JSON.stringify({ api_key: apiKey }),
   });
 }
 
