@@ -1816,3 +1816,423 @@ def polymarket_wallets_followed():
         return {"followed": [{"address": r[0], "followed_at": r[1]} for r in rows]}
     except Exception:
         return {"followed": []}
+
+
+# ---------------------------------------------------------------------------
+# Crypto trading endpoints — consumed by autotrader-hub frontend
+# ---------------------------------------------------------------------------
+
+def _crypto_conn():
+    """Return a row-factory sqlite3 connection to the crypto ledger."""
+    import sqlite3 as _sq
+    from core.crypto_ledger import connect_default, init_crypto_db
+    conn = connect_default()
+    init_crypto_db(conn)
+    return conn
+
+
+@app.get("/api/crypto/status")
+def crypto_status():
+    """Return current crypto bot mode, balance and open position count."""
+    import os as _os
+    from core.crypto_ledger import get_balance_estimate, get_open_positions
+    mode = _os.getenv("CRYPTO_MODE", "paper")
+    conn = _crypto_conn()
+    try:
+        positions = get_open_positions(conn, mode)
+        balance = get_balance_estimate(conn, mode)
+    finally:
+        conn.close()
+    return {
+        "mode": mode,
+        "active": True,
+        "balance_usd": round(balance, 2),
+        "open_positions": len(positions),
+    }
+
+
+@app.get("/api/crypto/positions")
+def crypto_positions():
+    """Return all currently open positions."""
+    import os as _os
+    from core.crypto_ledger import get_open_positions
+    mode = _os.getenv("CRYPTO_MODE", "paper")
+    conn = _crypto_conn()
+    try:
+        rows = get_open_positions(conn, mode)
+    finally:
+        conn.close()
+    return {
+        "positions": [
+            {
+                "id": p.id,
+                "symbol": p.symbol,
+                "side": p.side,
+                "entry_price": p.entry_price,
+                "qty_usd": p.qty,
+                "stop_loss": p.stop_loss,
+                "take_profit": p.take_profit,
+                "opened_at": p.opened_at,
+                "mode": p.mode,
+            }
+            for p in rows
+        ]
+    }
+
+
+@app.get("/api/crypto/trades")
+def crypto_trades(limit: int = 50, mode: str = "paper"):
+    """Return recent closed trades."""
+    conn = _crypto_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, symbol, side, entry_price, exit_price, qty_usd,
+                   realized_pnl, pnl_pct, opened_at, closed_at, exit_reason, mode
+            FROM crypto_trades
+            WHERE mode = ?
+            ORDER BY closed_at DESC
+            LIMIT ?
+            """,
+            (mode, limit),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {
+        "trades": [
+            {
+                "id": r[0],
+                "symbol": r[1],
+                "side": r[2],
+                "entry_price": r[3],
+                "exit_price": r[4],
+                "qty_usd": r[5],
+                "pnl": round(r[6], 4),
+                "pnl_pct": round(r[7] * 100, 2),
+                "opened_at": r[8],
+                "closed_at": r[9],
+                "reason": r[10],
+                "mode": r[11],
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.get("/api/crypto/pnl")
+def crypto_pnl(mode: str = "paper"):
+    """Return PnL summary: total, today, win rate, trade count."""
+    conn = _crypto_conn()
+    try:
+        rows = conn.execute(
+            "SELECT realized_pnl, pnl_pct, closed_at FROM crypto_trades WHERE mode = ?",
+            (mode,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return {"total_pnl": 0.0, "today_pnl": 0.0, "win_rate": 0.0, "trade_count": 0}
+
+    import time as _time
+    day_start = _time.time() - 86400
+    total_pnl = sum(r[0] for r in rows)
+    today_pnl = sum(r[0] for r in rows if r[2] >= day_start)
+    wins = sum(1 for r in rows if r[0] > 0)
+    return {
+        "total_pnl": round(total_pnl, 4),
+        "today_pnl": round(today_pnl, 4),
+        "win_rate": round(wins / len(rows) * 100, 1),
+        "trade_count": len(rows),
+    }
+
+
+@app.get("/api/crypto/balance")
+def crypto_balance():
+    """Return Binance account USDT balance (live) or ledger estimate (paper)."""
+    import os as _os
+    mode = _os.getenv("CRYPTO_MODE", "paper")
+    if mode == "live":
+        try:
+            from core.crypto_live_executor import get_account_balance
+            usdt = get_account_balance("USDT")
+            return {"mode": "live", "usdt": round(usdt, 2), "source": "binance"}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc))
+    from core.crypto_ledger import get_balance_estimate
+    conn = _crypto_conn()
+    try:
+        bal = get_balance_estimate(conn, "paper")
+    finally:
+        conn.close()
+    return {"mode": "paper", "usdt": round(bal, 2), "source": "ledger"}
+
+
+@app.post("/api/crypto/mode")
+def crypto_set_mode(body: dict):
+    """Switch bot mode between paper and live (writes CRYPTO_MODE to .env)."""
+    new_mode = body.get("mode", "").lower()
+    if new_mode not in ("paper", "live"):
+        raise HTTPException(status_code=400, detail="mode must be 'paper' or 'live'")
+    env_path = ".env"
+    try:
+        with open(env_path, "r") as f:
+            content = f.read()
+        if "CRYPTO_MODE=" in content:
+            lines = [
+                f"CRYPTO_MODE={new_mode}" if l.startswith("CRYPTO_MODE=") else l
+                for l in content.splitlines()
+            ]
+            new_content = "\n".join(lines) + "\n"
+        else:
+            new_content = content + f"\nCRYPTO_MODE={new_mode}\n"
+        with open(env_path, "w") as f:
+            f.write(new_content)
+        import os as _os
+        _os.environ["CRYPTO_MODE"] = new_mode
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"mode": new_mode, "message": f"Switched to {new_mode} mode. Restart loop to apply."}
+
+
+@app.post("/api/crypto/kill")
+def crypto_kill():
+    """Drop the kill-switch file to stop the crypto loop gracefully."""
+    from pathlib import Path as _Path
+    kill_file = _Path("data/CRYPTO_KILL")
+    kill_file.parent.mkdir(parents=True, exist_ok=True)
+    kill_file.touch()
+    return {"killed": True, "message": "Kill-switch activated. Loop will stop after current iteration."}
+
+
+@app.delete("/api/crypto/kill")
+def crypto_unkill():
+    """Remove the kill-switch file to allow the loop to start."""
+    from pathlib import Path as _Path
+    kill_file = _Path("data/CRYPTO_KILL")
+    if kill_file.exists():
+        kill_file.unlink()
+    return {"killed": False, "message": "Kill-switch removed. Loop can now start."}
+
+
+# ---------------------------------------------------------------------------
+# Crypto strategies, backtest, and market scan
+# ---------------------------------------------------------------------------
+
+# All supported pairs for the multi-pair scanner
+_CRYPTO_PAIRS = [
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT",
+    "XRPUSDT", "ADAUSDT", "AVAXUSDT", "DOGEUSDT",
+    "DOTUSDT", "LINKUSDT", "MATICUSDT", "UNIUSDT",
+]
+
+
+@app.get("/api/crypto/strategies")
+def crypto_strategies():
+    """Return list of available trading strategies with metadata."""
+    from core.crypto_strategy_engine import list_strategies
+    strats = list_strategies()
+    return {
+        "strategies": [
+            {
+                "name": s.name,
+                "label": s.label,
+                "description": s.description,
+                "default_params": s.default_params,
+            }
+            for s in strats
+        ]
+    }
+
+
+@app.get("/api/crypto/signals")
+def crypto_signals(strategy: str = "combined"):
+    """Return current signals for all supported pairs using the given strategy."""
+    from core.crypto_data_engine import fetch_candles, fetch_ticker_price
+    from core.crypto_strategy_engine import run_strategy
+    results = []
+    for symbol in _CRYPTO_PAIRS:
+        try:
+            candles = fetch_candles(symbol, "15m", 100)
+            sig = run_strategy(strategy, candles)
+            price = candles[-1].close if candles else 0.0
+            results.append({
+                "symbol": symbol,
+                "price": price,
+                "direction": sig.direction,
+                "confidence": sig.confidence,
+                "reason": sig.reason,
+                "entry_price": sig.entry_price,
+                "stop_loss": sig.stop_loss,
+                "take_profit": sig.take_profit,
+                "indicators": sig.indicators,
+            })
+        except Exception as exc:
+            results.append({"symbol": symbol, "error": str(exc), "direction": "flat"})
+    return {"strategy": strategy, "signals": results, "timestamp": __import__("time").time()}
+
+
+@app.post("/api/crypto/backtest")
+def crypto_backtest(body: dict):
+    """
+    Run a walk-forward backtest of a strategy on a given symbol.
+
+    Body:
+        symbol: e.g. "BTCUSDT"
+        strategy: strategy name
+        interval: candle interval e.g. "1h", "4h", "1d"
+        limit: number of candles (max 1000)
+        params: optional strategy param overrides
+        initial_balance: USD starting capital (default 1000)
+        min_confidence: minimum signal confidence (default 0.60)
+    """
+    from core.crypto_data_engine import fetch_candles
+    from core.crypto_strategy_engine import backtest as run_backtest
+
+    symbol = body.get("symbol", "BTCUSDT").upper()
+    strategy = body.get("strategy", "combined")
+    interval = body.get("interval", "1h")
+    limit = min(int(body.get("limit", 500)), 1000)
+    params = body.get("params")
+    initial_balance = float(body.get("initial_balance", 1000.0))
+    min_confidence = float(body.get("min_confidence", 0.60))
+
+    try:
+        candles = fetch_candles(symbol, interval, limit)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Binance data fetch failed: {exc}")
+
+    if len(candles) < 70:
+        raise HTTPException(status_code=400, detail=f"Not enough candles ({len(candles)}) for backtest — need ≥70")
+
+    result = run_backtest(strategy, candles, params, initial_balance, min_confidence=min_confidence)
+
+    return {
+        "strategy": result.strategy,
+        "symbol": symbol,
+        "interval": interval,
+        "candle_count": result.candle_count,
+        "initial_balance": result.initial_balance,
+        "final_balance": result.final_balance,
+        "total_return_pct": result.total_return_pct,
+        "win_rate": result.win_rate,
+        "max_drawdown_pct": result.max_drawdown_pct,
+        "sharpe_ratio": result.sharpe_ratio,
+        "profit_factor": result.profit_factor,
+        "avg_trade_pct": result.avg_trade_pct,
+        "trade_count": len(result.trades),
+        "equity_curve": result.equity_curve,
+        "trades": [
+            {
+                "direction": t.direction,
+                "entry_price": t.entry_price,
+                "exit_price": t.exit_price,
+                "entry_idx": t.entry_idx,
+                "exit_idx": t.exit_idx,
+                "pnl_pct": t.pnl_pct,
+                "pnl_usd": t.pnl_usd,
+                "size_usd": t.size_usd,
+                "reason": t.reason,
+            }
+            for t in result.trades
+        ],
+    }
+
+
+@app.get("/api/crypto/scan")
+def crypto_market_scan(strategy: str = "combined", interval: str = "15m"):
+    """Scan all supported pairs and return ranked signals + key indicators."""
+    from core.crypto_data_engine import fetch_candles
+    from core.crypto_strategy_engine import run_strategy
+    from core.crypto_indicators import calculate_rsi, calculate_macd
+    from core.crypto_signal_engine import calculate_atr
+    import math as _math
+
+    results = []
+    for symbol in _CRYPTO_PAIRS:
+        try:
+            candles = fetch_candles(symbol, interval, 100)
+            closes = [c.close for c in candles]
+            sig = run_strategy(strategy, candles)
+
+            rsi_vals = calculate_rsi(closes, 14)
+            rsi = rsi_vals[-1] if rsi_vals and not _math.isnan(rsi_vals[-1]) else 50.0
+            _, _, hist = calculate_macd(closes, 12, 26, 9)
+            macd_hist = hist[-1] if hist and not _math.isnan(hist[-1]) else 0.0
+            atr = calculate_atr(candles, 14)
+            price = closes[-1]
+            change_24h = (price - closes[0]) / closes[0] * 100 if closes[0] > 0 else 0.0
+
+            results.append({
+                "symbol": symbol,
+                "price": round(price, 6),
+                "change_24h_pct": round(change_24h, 2),
+                "direction": sig.direction,
+                "confidence": sig.confidence,
+                "reason": sig.reason,
+                "rsi": round(rsi, 2),
+                "macd_hist": round(macd_hist, 6),
+                "atr": round(atr, 6),
+                "atr_pct": round(atr / price * 100, 3),
+                "stop_loss": sig.stop_loss,
+                "take_profit": sig.take_profit,
+            })
+        except Exception as exc:
+            results.append({"symbol": symbol, "error": str(exc), "direction": "flat", "confidence": 0.0})
+
+    # Sort: non-flat first, then by confidence desc
+    results.sort(key=lambda r: (0 if r.get("direction") != "flat" else 1, -r.get("confidence", 0)))
+    return {"strategy": strategy, "interval": interval, "pairs": results, "timestamp": __import__("time").time()}
+
+
+@app.get("/api/crypto/indicators/{symbol}")
+def crypto_indicators(symbol: str, interval: str = "15m", limit: int = 100):
+    """Return full indicator snapshot for a single symbol."""
+    from core.crypto_data_engine import fetch_candles
+    from core.crypto_indicators import calculate_rsi, calculate_macd, calculate_ema
+    from core.crypto_signal_engine import calculate_atr
+    import math as _math
+
+    symbol = symbol.upper()
+    try:
+        candles = fetch_candles(symbol, interval, limit)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    closes = [c.close for c in candles]
+    volumes = [c.volume for c in candles]
+
+    rsi_vals = calculate_rsi(closes, 14)
+    rsi = rsi_vals[-1] if rsi_vals and not _math.isnan(rsi_vals[-1]) else 50.0
+
+    ema20 = calculate_ema(closes, 20)
+    ema50 = calculate_ema(closes, 50)
+    macd_line, sig_line, hist = calculate_macd(closes, 12, 26, 9)
+    atr = calculate_atr(candles, 14)
+
+    avg_vol = sum(volumes[-20:]) / 20 if len(volumes) >= 20 else 1.0
+    rel_vol = volumes[-1] / (avg_vol + 1e-9) if avg_vol > 0 else 1.0
+
+    return {
+        "symbol": symbol,
+        "interval": interval,
+        "price": closes[-1] if closes else 0.0,
+        "rsi": round(rsi, 2),
+        "rsi_signal": "buy" if rsi < 30 else "sell" if rsi > 70 else "neutral",
+        "ema20": round(ema20[-1], 6) if ema20 and not _math.isnan(ema20[-1]) else None,
+        "ema50": round(ema50[-1], 6) if ema50 and not _math.isnan(ema50[-1]) else None,
+        "ma_signal": "buy" if (not _math.isnan(ema20[-1]) and not _math.isnan(ema50[-1]) and ema20[-1] > ema50[-1]) else "sell",
+        "macd": round(macd_line[-1], 6) if macd_line and not _math.isnan(macd_line[-1]) else None,
+        "macd_signal": round(sig_line[-1], 6) if sig_line and not _math.isnan(sig_line[-1]) else None,
+        "macd_hist": round(hist[-1], 6) if hist and not _math.isnan(hist[-1]) else None,
+        "macd_signal_label": "buy" if (hist and not _math.isnan(hist[-1]) and hist[-1] > 0) else "sell",
+        "atr": round(atr, 6),
+        "atr_pct": round(atr / closes[-1] * 100, 3) if closes[-1] > 0 else 0.0,
+        "volume": round(volumes[-1], 2) if volumes else 0.0,
+        "relative_volume": round(rel_vol, 3),
+        "volume_signal": "buy" if rel_vol > 1.5 else "sell" if rel_vol < 0.5 else "neutral",
+        "ohlcv": [
+            {"t": c.timestamp, "o": c.open, "h": c.high, "l": c.low, "c": c.close, "v": c.volume}
+            for c in candles[-50:]
+        ],
+    }
