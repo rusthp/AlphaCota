@@ -12,11 +12,16 @@ import pytest
 import infra.database as db
 
 
+class _FakeSettings:
+    def __init__(self, db_path: str):
+        self.database_path = db_path
+
+
 @pytest.fixture(autouse=True)
 def temp_db(monkeypatch, tmp_path):
     """Use a temporary file-based SQLite database for each test."""
     db_path = str(tmp_path / "test.db")
-    monkeypatch.setattr(db.settings, "database_path", db_path)
+    monkeypatch.setattr(db, "settings", _FakeSettings(db_path))
     db.init_db()
     yield db_path
 

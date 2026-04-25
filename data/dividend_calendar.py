@@ -61,7 +61,8 @@ def _load_csv(ticker: str) -> "list[tuple[datetime.date, float]]":
     try:
         import pandas as pd
 
-        csv_path = _HISTORICAL_DIVIDENDS_DIR / f"{ticker}_dividends.csv"
+        ticker_clean = ticker.removesuffix(".SA")
+        csv_path = _HISTORICAL_DIVIDENDS_DIR / f"{ticker_clean}_dividends.csv"
         df = pd.read_csv(csv_path, parse_dates=["date"])
 
         if df.empty or "dividend" not in df.columns or "date" not in df.columns:

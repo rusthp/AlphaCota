@@ -1,0 +1,6 @@
+{
+  "tp_mult": 3,
+  "sl_mult": 1.5,
+  "strategy": "combined",
+  "pair": "BTC/USDT"
+}

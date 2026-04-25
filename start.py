@@ -18,7 +18,7 @@ except ImportError:
     pass
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-FRONTEND = os.path.join(ROOT, "frontend")
+FRONTEND = os.path.join(ROOT, "..", "autotrader-hub")
 
 
 def main():
@@ -44,7 +44,7 @@ def main():
     print()
     print("=" * 50)
     print("  AlphaCota rodando!")
-    print("  Frontend:  http://localhost:8080")
+    print("  Frontend:  http://localhost:5173")
     print("  API Docs:  http://localhost:8000/docs")
     print("  Ctrl+C para parar tudo")
     print("=" * 50)

@@ -44,11 +44,22 @@ from core.crypto_data_engine import (
     fetch_ticker_price,
     get_top_pairs,
 )
+from core.logger import logger
 from core.crypto_executor import close_paper_position, execute_paper
-from core.crypto_live_executor import close_live_position, execute_live
+try:
+    from core.crypto_live_executor import close_live_position, execute_live
+except Exception as _live_import_err:  # missing Binance SDK or key
+    logger.warning("crypto_loop: live executor unavailable — %s", _live_import_err)
+
+    def execute_live(*_a, **_kw):  # type: ignore[misc]
+        raise RuntimeError("Live executor not installed")
+
+    def close_live_position(*_a, **_kw):  # type: ignore[misc]
+        raise RuntimeError("Live executor not installed")
 from core.crypto_ledger import (
     connect_default,
     get_balance_estimate,
+    get_daily_pnl,
     get_open_positions,
     write_pnl_snapshot,
 )
@@ -58,13 +69,28 @@ from core.crypto_risk_engine import (
     should_exit_position,
     validate_signal_risk,
 )
-from core.crypto_signal_engine import generate_signal
+from core.crypto_signal_engine import generate_signal, get_adaptive_multipliers
 from core.crypto_sizing_engine import size_position
 from core.crypto_types import CryptoPosition, CryptoSignal
-from core.logger import logger
+
+try:
+    from core.crypto_ml_model import get_confidence as _ml_get_confidence
+    _ML_AVAILABLE = True
+except Exception as _ml_import_err:
+    logger.warning("crypto_loop: ML model unavailable — %s", _ml_import_err)
+    _ML_AVAILABLE = False
+
+_ML_MIN_CONFIDENCE = float(os.getenv("CRYPTO_ML_MIN_CONFIDENCE", "0.60"))
+from core.crypto_telegram import (
+    notify_position_opened,
+    notify_position_closed,
+    notify_circuit_breaker,
+    notify_daily_summary,
+)
 
 _KILL_FILE = Path("data/CRYPTO_KILL")
 _CHART_DIR = Path("data/charts")
+_CONFIG_FILE = Path("data/crypto_bot_config.json")
 _LOOP_INTERVAL = int(os.getenv("CRYPTO_LOOP_INTERVAL_SECONDS", "300"))
 _INITIAL_BALANCE = float(os.getenv("CRYPTO_INITIAL_BALANCE_USD", "1000.0"))
 _TOP_PAIRS_LIMIT = 10
@@ -72,6 +98,32 @@ _PNL_SNAPSHOT_EVERY = 12
 _CANDLE_INTERVAL = "15m"
 _CANDLE_LIMIT = 100
 _NEWS_LIMIT = 20
+# Trigger a feedback re-train every N iterations (≈ 7 days at 5-min candles).
+_FEEDBACK_RETRAIN_EVERY = int(os.getenv("CRYPTO_FEEDBACK_RETRAIN_EVERY", "2016"))
+
+try:
+    from core.crypto_feedback_trainer import retrain_if_due as _retrain_if_due
+    _FEEDBACK_TRAINER_AVAILABLE = True
+except Exception as _fb_import_err:
+    logger.debug("crypto_loop: feedback trainer unavailable — %s", _fb_import_err)
+    _FEEDBACK_TRAINER_AVAILABLE = False
+
+
+def _load_bot_config() -> dict:
+    """Load TP/SL multipliers and strategy from the shared config file."""
+    defaults: dict = {"tp_mult": 3.0, "sl_mult": 1.5, "strategy": "combined"}
+    if _CONFIG_FILE.exists():
+        import json as _json
+        try:
+            raw = _json.loads(_CONFIG_FILE.read_text())
+            return {
+                "tp_mult": float(raw.get("tp_mult", defaults["tp_mult"])),
+                "sl_mult": float(raw.get("sl_mult", defaults["sl_mult"])),
+                "strategy": str(raw.get("strategy", defaults["strategy"])),
+            }
+        except Exception:
+            pass
+    return defaults
 
 
 def _is_killed() -> bool:
@@ -83,7 +135,7 @@ class _GracefulStop(Exception):
     """Raised to convert SIGTERM into a controlled loop exit."""
 
 
-def _handle_sigterm(signum: int, frame: FrameType | None) -> None:
+def _handle_sigterm(signum: int, _frame: FrameType | None) -> None:
     """Signal handler: raise inside the loop so finally-blocks run."""
     raise _GracefulStop(f"signal {signum} received")
 
@@ -133,10 +185,11 @@ def _monitor_and_exit_positions(
         if should_exit:
             try:
                 if mode == "live":
-                    close_live_position(pos.id, price, reason, conn)  # type: ignore[arg-type]
+                    trade = close_live_position(pos.id, price, reason, conn)  # type: ignore[arg-type]
                 else:
-                    close_paper_position(pos.id, price, reason, conn)  # type: ignore[arg-type]
+                    trade = close_paper_position(pos.id, price, reason, conn)  # type: ignore[arg-type]
                 closed += 1
+                notify_position_closed(trade, "", mode)
             except Exception as exc:
                 logger.error(
                     "monitor: failed to close %s (%s): %s",
@@ -151,6 +204,7 @@ def _process_symbol(
     mode: str,
     news_cache: list,
     balance_usd: float,
+    bot_config: dict | None = None,
 ) -> tuple[CryptoSignal | None, float, bool]:
     """Run the full per-symbol pipeline and, when allowed, open a new position.
 
@@ -172,6 +226,13 @@ def _process_symbol(
 
     last_price = candles[-1].close
 
+    # Higher-timeframe trend filter: 4H candles for EMA50/EMA200 trend bias.
+    htf_candles = None
+    try:
+        htf_candles = fetch_candles(symbol, interval="4h", limit=210)
+    except Exception as exc:
+        logger.debug("process: 4H fetch(%s) failed: %s — skipping HTF filter", symbol, exc)
+
     try:
         obi = fetch_order_book_imbalance(symbol)
     except Exception as exc:
@@ -179,7 +240,29 @@ def _process_symbol(
         obi = 0.0
 
     news_score = score_news_sentiment(news_cache, symbol)
-    signal_obj = generate_signal(symbol, candles, news_score, obi)
+    cfg = bot_config or {}
+
+    # Adaptive SL/TP multipliers — computed from recent win rate.
+    # Falls back gracefully to static config or module defaults when
+    # there are fewer than 10 trades in the DB.
+    try:
+        adap_sl, adap_tp = get_adaptive_multipliers(conn, mode)  # type: ignore[arg-type]
+    except Exception as exc:
+        logger.debug("process: adaptive multipliers unavailable (%s) — using config", exc)
+        adap_sl = cfg.get("sl_mult")
+        adap_tp = cfg.get("tp_mult")
+
+    logger.debug(
+        "process: %s adaptive multipliers sl=%.3f tp=%.3f",
+        symbol, adap_sl or 1.5, adap_tp or 3.0,
+    )
+
+    signal_obj = generate_signal(
+        symbol, candles, news_score, obi,
+        sl_mult=adap_sl,
+        tp_mult=adap_tp,
+        htf_candles=htf_candles,
+    )
 
     if signal_obj.direction != "flat":
         ts = int(time.time())
@@ -190,7 +273,30 @@ def _process_symbol(
             logger.warning("process: chart failed for %s: %s", symbol, exc)
 
     if signal_obj.direction == "flat":
+        logger.info("process: %s flat — %s", symbol, signal_obj.reason)
         return (signal_obj, last_price, False)
+
+    if _ML_AVAILABLE:
+        try:
+            ml_sig = _ml_get_confidence(symbol, _CANDLE_INTERVAL)
+            if ml_sig.direction != signal_obj.direction:
+                logger.info(
+                    "process: %s ML disagrees (tech=%s ml=%s conf=%.2f) — skipping",
+                    symbol, signal_obj.direction, ml_sig.direction, ml_sig.confidence,
+                )
+                return (signal_obj, last_price, False)
+            if ml_sig.confidence < _ML_MIN_CONFIDENCE:
+                logger.info(
+                    "process: %s ML confidence too low (%.2f < %.2f) — skipping",
+                    symbol, ml_sig.confidence, _ML_MIN_CONFIDENCE,
+                )
+                return (signal_obj, last_price, False)
+            logger.info(
+                "process: %s ML confirms %s (conf=%.2f)",
+                symbol, ml_sig.direction, ml_sig.confidence,
+            )
+        except Exception as exc:
+            logger.debug("process: ML check skipped for %s: %s", symbol, exc)
 
     if not validate_signal_risk(signal_obj, balance_usd):
         logger.info(
@@ -202,6 +308,9 @@ def _process_symbol(
     ok, reason = check_risk_limits(conn, mode)  # type: ignore[arg-type]
     if not ok:
         logger.info("process: risk limits block new position — %s", reason)
+        if reason.startswith("daily_loss_cap_hit"):
+            daily_loss = get_daily_pnl(conn, mode)  # type: ignore[arg-type]
+            notify_circuit_breaker(reason, daily_loss)
         return (signal_obj, last_price, False)
 
     size_usd = size_position(signal_obj, balance_usd)
@@ -212,6 +321,7 @@ def _process_symbol(
     if mode == "paper":
         try:
             execute_paper(signal_obj, size_usd, conn)  # type: ignore[arg-type]
+            notify_position_opened(signal_obj, size_usd, signal_obj.reason, mode)
             return (signal_obj, last_price, True)
         except Exception as exc:
             logger.error("process: execute_paper(%s) failed: %s", symbol, exc)
@@ -219,10 +329,31 @@ def _process_symbol(
 
     try:
         execute_live(signal_obj, size_usd, conn)  # type: ignore[arg-type]
+        notify_position_opened(signal_obj, size_usd, signal_obj.reason, mode)
         return (signal_obj, last_price, True)
     except Exception as exc:
         logger.error("process: execute_live(%s) failed: %s", symbol, exc)
         return (signal_obj, last_price, False)
+
+
+def _send_daily_summary(conn: object, mode: str) -> None:
+    """Fetch today's stats and fire a Telegram daily summary."""
+    try:
+        pnl = get_daily_pnl(conn, mode)  # type: ignore[arg-type]
+        rows = conn.execute(  # type: ignore[union-attr]
+            "SELECT COUNT(*) AS n, "
+            "SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) AS wins "
+            "FROM crypto_trades WHERE mode = ? "
+            "AND date(closed_at, 'unixepoch') = date('now')",
+            (mode,),
+        ).fetchone()
+        total = int(rows["n"]) if rows and rows["n"] else 0
+        wins = int(rows["wins"]) if rows and rows["wins"] else 0
+        win_rate = (wins / total * 100.0) if total > 0 else 0.0
+        balance = get_balance_estimate(conn, _INITIAL_BALANCE, mode)  # type: ignore[arg-type]
+        notify_daily_summary(pnl, total, win_rate, balance, mode)
+    except Exception as exc:
+        logger.warning("_send_daily_summary: %s", exc)
 
 
 def _cancel_pending_paper_orders(conn: object, mode: str) -> None:
@@ -294,6 +425,12 @@ def run_loop(mode: str = "paper", max_iterations: int = 0) -> None:
                     news_cache = []
 
                 balance_usd = get_balance_estimate(conn, _INITIAL_BALANCE, mode)
+                bot_config = _load_bot_config()
+
+                # Build set of symbols that already have an open position so
+                # _process_symbol never opens a second position for the same pair.
+                existing_positions = get_open_positions(conn, mode)
+                open_symbols: set[str] = {p.symbol for p in existing_positions}
 
                 signals_by_symbol: dict[str, CryptoSignal] = {}
                 price_by_symbol: dict[str, float] = {}
@@ -302,8 +439,11 @@ def run_loop(mode: str = "paper", max_iterations: int = 0) -> None:
                 for sym in symbols:
                     if _is_killed():
                         break
+                    if sym in open_symbols:
+                        logger.debug("run_loop: %s already has open position — skipping entry", sym)
+                        continue
                     sig, last_price, opened = _process_symbol(
-                        sym, conn, mode, news_cache, balance_usd,
+                        sym, conn, mode, news_cache, balance_usd, bot_config,
                     )
                     if sig is not None:
                         signals_by_symbol[sym] = sig
@@ -311,6 +451,7 @@ def run_loop(mode: str = "paper", max_iterations: int = 0) -> None:
                         price_by_symbol[sym] = last_price
                     if opened:
                         opened_this_iter += 1
+                        open_symbols.add(sym)
                         balance_usd = get_balance_estimate(conn, _INITIAL_BALANCE, mode)
 
                 open_positions = get_open_positions(conn, mode)
@@ -326,6 +467,21 @@ def run_loop(mode: str = "paper", max_iterations: int = 0) -> None:
 
                 if iteration % _PNL_SNAPSHOT_EVERY == 0:
                     write_pnl_snapshot(conn, mode)
+                    _send_daily_summary(conn, mode)
+
+                # Periodic feedback re-training (weekly by default).
+                if (
+                    _FEEDBACK_TRAINER_AVAILABLE
+                    and _FEEDBACK_RETRAIN_EVERY > 0
+                    and iteration % _FEEDBACK_RETRAIN_EVERY == 0
+                ):
+                    logger.info("run_loop: triggering scheduled feedback re-train (iter=%d)", iteration)
+                    try:
+                        retrained = _retrain_if_due(conn, mode=mode)  # type: ignore[arg-type]
+                        if retrained:
+                            logger.info("run_loop: feedback re-train completed at iter=%d", iteration)
+                    except Exception as _fb_exc:
+                        logger.warning("run_loop: feedback re-train failed: %s", _fb_exc)
 
             except _GracefulStop:
                 raise

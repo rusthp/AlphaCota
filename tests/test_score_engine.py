@@ -1,7 +1,7 @@
 """Tests for core/score_engine.py — Alpha Score model for FIIs."""
 
-import sys
 import math
+import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -9,13 +9,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pytest
 from core.score_engine import (
     DEFAULT_WEIGHTS,
-    validate_weights,
-    calculate_income_score,
-    calculate_valuation_score,
-    calculate_risk_score,
-    calculate_growth_score,
     calculate_alpha_score,
+    calculate_growth_score,
+    calculate_income_score,
+    calculate_risk_score,
+    calculate_valuation_score,
     rank_fiis,
+    validate_weights,
 )
 
 
@@ -34,63 +34,87 @@ class TestValidateWeights:
             validate_weights(bad)
 
     def test_sum_not_one_raises(self):
-        bad = {"w_income": 0.5, "w_valuation": 0.5, "w_risk": 0.5, "w_growth": 0.5}
+        # All required keys present but sum != 1.0
+        bad = {
+            "w_income": 0.5,
+            "w_valuation": 0.5,
+            "w_risk": 0.5,
+            "w_growth": 0.5,
+            "w_news": 0.5,
+        }
         with pytest.raises(ValueError, match="somar"):
             validate_weights(bad)
 
     def test_sum_within_tolerance(self):
-        w = {"w_income": 0.40, "w_valuation": 0.25, "w_risk": 0.20, "w_growth": 0.15}
+        # All required keys, sum = 1.0
+        w = {
+            "w_income": 0.40,
+            "w_valuation": 0.25,
+            "w_risk": 0.20,
+            "w_growth": 0.05,
+            "w_news": 0.10,
+        }
         validate_weights(w)  # Should not raise
 
 
 class TestCalculateIncomeScore:
+    # Score is 0-100
+
     def test_high_yield_high_consistency(self):
-        score = calculate_income_score(0.12, 10.0)
-        assert 8.0 <= score <= 10.0
+        # DY=12%, consistency=100 → dy_score=100, result=100
+        score = calculate_income_score(0.12, 100.0)
+        assert 80.0 <= score <= 100.0
 
     def test_low_yield_low_consistency(self):
         score = calculate_income_score(0.04, 0.0)
         assert score == pytest.approx(0.0)
 
     def test_mid_range(self):
-        score = calculate_income_score(0.08, 5.0)
-        assert 2.0 <= score <= 6.0
+        # DY=8% → dy_score=50, consistency=50 → result = 0.6*50 + 0.4*50 = 50
+        score = calculate_income_score(0.08, 50.0)
+        assert 20.0 <= score <= 60.0
 
     def test_nan_yield_treated_as_zero(self):
-        score = calculate_income_score(float("nan"), 5.0)
-        assert 0.0 <= score <= 10.0
+        score = calculate_income_score(float("nan"), 50.0)
+        assert 0.0 <= score <= 100.0
 
     def test_nan_consistency_treated_as_zero(self):
         score = calculate_income_score(0.10, float("nan"))
-        assert 0.0 <= score <= 10.0
+        assert 0.0 <= score <= 100.0
 
 
 class TestCalculateValuationScore:
+    # Score is 0-100
+
     def test_cheap_pvp(self):
+        # pvp=0.7 → score=100
         score = calculate_valuation_score(0.7)
-        assert score == pytest.approx(10.0)
+        assert score == pytest.approx(100.0)
 
     def test_expensive_pvp(self):
         score = calculate_valuation_score(1.5)
         assert score == pytest.approx(0.0)
 
     def test_fair_pvp(self):
+        # pvp=1.0 → score = (1.5-1.0)/(1.5-0.7)*100 = 62.5
         score = calculate_valuation_score(1.0)
-        assert 4.0 <= score <= 8.0
+        assert 40.0 <= score <= 80.0
 
     def test_zero_pvp_uses_neutral(self):
         score = calculate_valuation_score(0.0)
-        assert 0.0 <= score <= 10.0
+        assert 0.0 <= score <= 100.0
 
     def test_nan_pvp_uses_neutral(self):
         score = calculate_valuation_score(float("nan"))
-        assert 0.0 <= score <= 10.0
+        assert 0.0 <= score <= 100.0
 
 
 class TestCalculateRiskScore:
+    # Score is 0-100 (100 = low risk)
+
     def test_low_debt_low_vacancy(self):
         score = calculate_risk_score(0.0, 0.0)
-        assert score == pytest.approx(10.0)
+        assert score == pytest.approx(100.0)
 
     def test_high_debt_high_vacancy(self):
         score = calculate_risk_score(1.0, 0.30)
@@ -98,27 +122,28 @@ class TestCalculateRiskScore:
 
     def test_mid_range(self):
         score = calculate_risk_score(0.5, 0.10)
-        assert 2.0 <= score <= 8.0
+        assert 20.0 <= score <= 80.0
 
     def test_nan_debt_uses_default(self):
         score = calculate_risk_score(float("nan"), 0.05)
-        assert 0.0 <= score <= 10.0
+        assert 0.0 <= score <= 100.0
 
     def test_nan_vacancy_uses_default(self):
-        """nan vacancy_rate triggers the warning branch (lines 129-130)."""
         score = calculate_risk_score(0.3, float("nan"))
-        assert 0.0 <= score <= 10.0
+        assert 0.0 <= score <= 100.0
 
     def test_inf_vacancy_uses_default(self):
-        """inf vacancy_rate also triggers the nan/inf guard (lines 129-130)."""
         score = calculate_risk_score(0.2, float("inf"))
-        assert 0.0 <= score <= 10.0
+        assert 0.0 <= score <= 100.0
 
 
 class TestCalculateGrowthScore:
+    # Score is 0-100
+
     def test_high_growth(self):
+        # both at 20% → 100
         score = calculate_growth_score(0.20, 0.20)
-        assert score == pytest.approx(10.0)
+        assert score == pytest.approx(100.0)
 
     def test_zero_growth(self):
         score = calculate_growth_score(0.0, 0.0)
@@ -129,26 +154,25 @@ class TestCalculateGrowthScore:
         assert score == pytest.approx(0.0)
 
     def test_nan_revenue_growth_treated_as_zero(self):
-        """nan revenue_growth_12m triggers the guard (line 154)."""
         score = calculate_growth_score(float("nan"), 0.10)
-        assert 0.0 <= score <= 10.0
+        assert 0.0 <= score <= 100.0
 
     def test_nan_earnings_growth_treated_as_zero(self):
-        """nan earnings_growth_12m triggers the guard (line 156)."""
         score = calculate_growth_score(0.10, float("nan"))
-        assert 0.0 <= score <= 10.0
+        assert 0.0 <= score <= 100.0
 
     def test_inf_revenue_growth_treated_as_zero(self):
-        """inf revenue_growth_12m is reset to 0.0 by the guard (line 153-154)."""
         score = calculate_growth_score(float("inf"), 0.0)
-        assert score == pytest.approx(0.0)  # inf replaced with 0.0, earnings also 0.0
+        assert score == pytest.approx(0.0)
 
 
 class TestCalculateAlphaScore:
+    # alpha_score is 0-100
+
     def test_returns_all_keys(self):
         result = calculate_alpha_score(
             dividend_yield=0.10,
-            dividend_consistency=8.0,
+            dividend_consistency=80.0,
             pvp=0.9,
             debt_ratio=0.2,
             vacancy_rate=0.05,
@@ -162,28 +186,34 @@ class TestCalculateAlphaScore:
         assert "growth_score" in result
         assert "weights_used" in result
 
-    def test_score_between_0_and_10(self):
-        result = calculate_alpha_score(0.08, 5.0, 1.0, 0.5, 0.10, 0.05, 0.05)
-        assert 0.0 <= result["alpha_score"] <= 10.0
+    def test_score_between_0_and_100(self):
+        result = calculate_alpha_score(0.08, 50.0, 1.0, 0.5, 0.10, 0.05, 0.05)
+        assert 0.0 <= result["alpha_score"] <= 100.0
 
     def test_excellent_fii(self):
-        result = calculate_alpha_score(0.12, 10.0, 0.7, 0.0, 0.0, 0.20, 0.20)
-        assert result["alpha_score"] > 8.0
+        result = calculate_alpha_score(0.12, 100.0, 0.7, 0.0, 0.0, 0.20, 0.20)
+        assert result["alpha_score"] > 80.0
 
     def test_poor_fii(self):
         result = calculate_alpha_score(0.04, 0.0, 1.5, 1.0, 0.30, 0.0, 0.0)
-        assert result["alpha_score"] < 2.0
+        assert result["alpha_score"] < 20.0
 
     def test_custom_weights(self):
-        custom = {"w_income": 1.0, "w_valuation": 0.0, "w_risk": 0.0, "w_growth": 0.0}
-        result = calculate_alpha_score(0.12, 10.0, 1.5, 1.0, 0.30, 0.0, 0.0, weights=custom)
-        # Score should be driven entirely by income
-        assert result["alpha_score"] > 7.0
+        # All weight on income, excellent income → high score
+        custom = {
+            "w_income": 1.0,
+            "w_valuation": 0.0,
+            "w_risk": 0.0,
+            "w_growth": 0.0,
+            "w_news": 0.0,
+        }
+        result = calculate_alpha_score(0.12, 100.0, 1.5, 1.0, 0.30, 0.0, 0.0, weights=custom)
+        assert result["alpha_score"] > 70.0
 
     def test_invalid_weights_raises(self):
         bad = {"w_income": 0.5, "w_valuation": 0.5, "w_risk": 0.5, "w_growth": 0.5}
         with pytest.raises(ValueError):
-            calculate_alpha_score(0.10, 5.0, 1.0, 0.5, 0.1, 0.05, 0.05, weights=bad)
+            calculate_alpha_score(0.10, 50.0, 1.0, 0.5, 0.1, 0.05, 0.05, weights=bad)
 
 
 class TestRankFiis:

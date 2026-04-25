@@ -158,6 +158,94 @@ def register_market_tools(mcp: Any) -> None:
         return {"fiis": results, "total": len(results)}
 
     @mcp.tool()
+    def score_polymarket_market(condition_id: str) -> dict:
+        """Score a Polymarket market by condition_id using the composite scoring engine.
+
+        Fetches the market from Gamma API, runs the full scoring pipeline
+        (edge, liquidity, time decay, copy signal, news sentiment), and returns
+        the MarketScore as a serialisable dict.
+
+        Args:
+            condition_id: Polymarket condition ID.
+
+        Returns:
+            dict with total, edge, liquidity, time_decay, copy_signal,
+            news_sentiment, fair_prob, and weights.
+        """
+        import httpx
+        from core.polymarket_score import score_market
+
+        try:
+            resp = httpx.get(
+                "https://gamma-api.polymarket.com/markets",
+                params={"condition_id": condition_id},
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            raw = data[0] if isinstance(data, list) and data else (data if isinstance(data, dict) else {})
+        except Exception as exc:
+            return {"error": f"Gamma API error: {exc}"}
+
+        from core.polymarket_client import _parse_market
+        market = _parse_market(raw)
+        if market is None:
+            return {"error": f"Could not parse market {condition_id}"}
+
+        ms = score_market(market)
+        return {
+            "condition_id": ms.condition_id,
+            "total": ms.total,
+            "edge": ms.edge,
+            "liquidity": ms.liquidity,
+            "time_decay": ms.time_decay,
+            "copy_signal": ms.copy_signal,
+            "news_sentiment": ms.news_sentiment,
+            "fair_prob": ms.fair_prob,
+            "weights": ms.weights,
+        }
+
+    @mcp.tool()
+    def get_polymarket_trade_decisions(limit: int = 5) -> dict:
+        """Run the full Polymarket decision engine on the top discovered markets.
+
+        Discovers markets, scores each, gates through risk rules, sizes positions,
+        and returns a ranked list of approved TradeDecisions.
+
+        Args:
+            limit: Maximum number of decisions to return (default: 5).
+
+        Returns:
+            dict with decisions list and count.
+        """
+        from core.config import settings
+        from core.polymarket_client import discover_markets, get_wallet_health
+        from core.polymarket_decision_engine import generate_trade_decisions
+
+        markets = discover_markets(limit=limit * 3)
+        wallet_health = get_wallet_health()
+        decisions = generate_trade_decisions(
+            markets=markets,
+            config=settings,
+            wallet_health=wallet_health,
+        )
+        return {
+            "decisions": [
+                {
+                    "condition_id": d.condition_id,
+                    "token_id": d.token_id,
+                    "direction": d.direction,
+                    "size_usd": d.size_usd,
+                    "score": d.score,
+                    "kelly_fraction": d.kelly_fraction,
+                    "reasoning": d.reasoning,
+                }
+                for d in decisions[:limit]
+            ],
+            "total": len(decisions),
+        }
+
+    @mcp.tool()
     def get_polymarket_alpha_wallets(limit: int = 10) -> dict:
         """Retorna ranking de carteiras alpha no Polymarket por taxa de acerto e recência.
 

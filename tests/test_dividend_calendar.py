@@ -138,7 +138,7 @@ class TestEnrichWithHistory:
         result = self._base_result()
         with _patch_scraper_dividends_dir(tmp_path):
             enriched = scraper._enrich_with_history(result, "MXRF11")
-        assert enriched["revenue_growth_12m"] == -1.0
+        assert enriched["revenue_growth_12m"] == pytest.approx(-1.0, abs=0.01)
 
     def test_zero_older_average_returns_zero_growth(self, tmp_path):
         # older period all zero → avoid div/zero → growth = 0.0

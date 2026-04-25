@@ -149,8 +149,8 @@ def analyze_fii_news(ticker: str, news_list: list[dict], api_key: str | None = N
 # ---------------------------------------------------------------------------
 
 _OPENROUTER_BASE = "https://openrouter.ai/api/v1"
-_DEEPSEEK_R1 = "deepseek/deepseek-r1:free"
-_QWEN_CODER = "qwen/qwen3-coder:free"
+_DEEPSEEK_R1 = "meta-llama/llama-3.3-70b-instruct:free"
+_QWEN_CODER = "meta-llama/llama-3.3-70b-instruct:free"
 
 
 def call_openrouter(
@@ -305,16 +305,33 @@ def estimate_market_probability(market: dict, context: str = "", api_key: str | 
         {"role": "user", "content": user_prompt},
     ]
 
-    for attempt in range(2):
-        try:
-            response = call_openrouter(_DEEPSEEK_R1, messages, api_key=api_key)
-            content = _extract_content(response)
-            result = _parse_prob_json(content)
-            if result is not None:
-                return result
-            logger.warning("estimate_market_probability: invalid JSON on attempt %d", attempt + 1)
-        except Exception as exc:
-            logger.warning("estimate_market_probability attempt %d failed: %s", attempt + 1, exc)
+    _FALLBACK_MODELS = [
+        "nvidia/nemotron-3-super-120b-a12b:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "openai/gpt-oss-120b:free",
+        "nousresearch/hermes-3-llama-3.1-405b:free",
+    ]
+
+    import time as _time
+    for model in _FALLBACK_MODELS:
+        for attempt in range(2):
+            try:
+                _time.sleep(1)  # respect free-tier rate limits
+                response = call_openrouter(model, messages, api_key=api_key)
+                content = _extract_content(response)
+                result = _parse_prob_json(content)
+                if result is not None:
+                    return result
+                logger.warning("estimate_market_probability: invalid JSON on attempt %d (model=%s)", attempt + 1, model)
+            except Exception as exc:
+                msg = str(exc)
+                logger.warning("estimate_market_probability attempt %d failed: %s", attempt + 1, exc)
+                if "429" in msg:
+                    _time.sleep(3)  # back off on rate limit before trying next model
+                    break  # skip second attempt, try next model
+        else:
+            continue  # inner loop didn't break — model succeeded or parse failed; try next model anyway
+        continue
 
     return None
 

@@ -185,16 +185,18 @@ def execute_live(
         conn.execute(
             """
             INSERT INTO crypto_orders
-                (id, symbol, side, qty, price, status, mode, created_at)
-            VALUES (?, ?, ?, ?, ?, 'filled', 'live', ?)
+                (id, symbol, side, qty_usd, entry_price, status, mode, created_at,
+                 binance_order_id)
+            VALUES (?, ?, ?, ?, ?, 'filled', 'live', ?, ?)
             """,
-            (order_id, signal.symbol, side.lower(), size_usd, fill_price, now),
+            (order_id, signal.symbol, side.lower(), size_usd, fill_price, now,
+             binance_order_id),
         )
         conn.execute(
             """
             INSERT INTO crypto_positions
                 (id, symbol, side, entry_price, qty_usd, stop_loss, take_profit,
-                 opened_at, mode, exchange_order_id)
+                 opened_at, mode, signal_confidence)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'live', ?)
             """,
             (
@@ -206,7 +208,7 @@ def execute_live(
                 signal.stop_loss,
                 signal.take_profit,
                 now,
-                binance_order_id,
+                signal.confidence,
             ),
         )
         conn.commit()

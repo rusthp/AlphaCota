@@ -5,6 +5,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Component, ReactNode } from "react";
 import Index from "./pages/Index";
+import LoginPage from "./pages/LoginPage";
+import RequireAuth from "./components/RequireAuth";
 import NotFound from "./pages/NotFound";
 import DashboardLayout from "./components/DashboardLayout";
 import ScannerPage from "./pages/ScannerPage";
@@ -20,6 +22,8 @@ import ClustersPage from "./pages/ClustersPage";
 import DividendCalendarPage from "./pages/DividendCalendarPage";
 import ComparePage from "./pages/ComparePage";
 import WatchlistPage from "./pages/WatchlistPage";
+import PolymarketPage from "./pages/PolymarketPage";
+import TerminalPage from "./pages/TerminalPage";
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null };
@@ -53,7 +57,8 @@ const App = () => (
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Index />} />
-          <Route path="/dashboard" element={<DashboardLayout />}>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/dashboard" element={<RequireAuth><DashboardLayout /></RequireAuth>}>
             <Route index element={<Navigate to="scanner" replace />} />
             <Route path="scanner" element={<ScannerPage />} />
             <Route path="fii/:ticker" element={<FIIDetailPage />} />
@@ -68,6 +73,8 @@ const App = () => (
             <Route path="calendar" element={<DividendCalendarPage />} />
             <Route path="compare" element={<ComparePage />} />
             <Route path="watchlist" element={<WatchlistPage />} />
+            <Route path="polymarket" element={<PolymarketPage />} />
+            <Route path="terminal" element={<TerminalPage />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>

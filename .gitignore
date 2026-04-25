@@ -77,3 +77,19 @@ frontend/bun.lockb
 
 # Cursor
 .cursor/
+
+CLAUDE.local.md
+.rulebook/backup/
+.rulebook/handoff/_pending.md
+.rulebook/handoff/.urgent
+.rulebook/telemetry/
+
+# Polymarket runtime data
+data/polymarket_ledger.db
+data/wallet_cache.db
+data/audit.db
+data/.vault
+data/POLYMARKET_KILL
+data/learned_weights.json
+logs/polymarket_*.jsonl
+.mcp.json

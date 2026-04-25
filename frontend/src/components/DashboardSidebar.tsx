@@ -1,6 +1,7 @@
-import { Radar, LineChart, Briefcase, Sparkles, ArrowLeft, Globe, TrendingUp, Shield, GitBranch, Layers, CalendarDays, BarChart3, Bookmark } from "lucide-react";
+import { Radar, LineChart, Briefcase, Sparkles, ArrowLeft, Globe, TrendingUp, Shield, GitBranch, Layers, CalendarDays, BarChart3, Bookmark, Zap, TerminalSquare, LogOut } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation, Link } from "react-router-dom";
+import { logout } from "@/lib/auth";
 import {
   Sidebar,
   SidebarContent,
@@ -26,6 +27,8 @@ const items = [
   { title: "Calendário", url: "/dashboard/calendar", icon: CalendarDays },
   { title: "Comparador", url: "/dashboard/compare", icon: BarChart3 },
   { title: "Watchlist", url: "/dashboard/watchlist", icon: Bookmark },
+  { title: "Polymarket", url: "/dashboard/polymarket", icon: Zap },
+  { title: "Terminal", url: "/dashboard/terminal", icon: TerminalSquare },
 ];
 
 export function DashboardSidebar() {
@@ -61,12 +64,19 @@ export function DashboardSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* Back to landing */}
-        <div className="mt-auto p-4">
+        {/* Bottom actions */}
+        <div className="mt-auto p-4 space-y-2">
           <Link to="/" className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors">
             <ArrowLeft className="w-3.5 h-3.5" />
             {!collapsed && <span>Voltar ao site</span>}
           </Link>
+          <button
+            onClick={logout}
+            className="flex items-center gap-2 text-xs text-muted-foreground hover:text-destructive transition-colors w-full"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            {!collapsed && <span>Sair</span>}
+          </button>
         </div>
       </SidebarContent>
     </Sidebar>

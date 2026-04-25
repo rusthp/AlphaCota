@@ -321,7 +321,7 @@ def test_compare_benchmark_basic():
 
 def test_validate_weights_valid():
     """Pesos válidos não devem lançar exceção."""
-    validate_weights({"w_income": 0.40, "w_valuation": 0.25, "w_risk": 0.20, "w_growth": 0.15})
+    validate_weights({"w_income": 0.40, "w_valuation": 0.25, "w_risk": 0.20, "w_growth": 0.10, "w_news": 0.05})
 
 
 def test_validate_weights_invalid_sum():
@@ -368,9 +368,9 @@ def test_calculate_alpha_score_returns_dict():
         revenue_growth_12m=0.08,
         earnings_growth_12m=0.06,
     )
-    expected_keys = {"alpha_score", "income_score", "valuation_score", "risk_score", "growth_score", "weights_used"}
+    expected_keys = {"alpha_score", "income_score", "valuation_score", "risk_score", "growth_score", "news_sentiment_score", "weights_used"}
     assert expected_keys == set(result.keys()), f"Chaves esperadas: {expected_keys}"
-    assert 0.0 <= result["alpha_score"] <= 10.0, "Alpha score deve estar entre 0 e 10"
+    assert 0.0 <= result["alpha_score"] <= 100.0, "Alpha score deve estar entre 0 e 100"
 
 
 def test_rank_fiis():

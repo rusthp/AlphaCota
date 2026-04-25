@@ -370,7 +370,7 @@ class TestPipelineIntegration:
             connection=test_db,
             user_profile="moderado",
             assets_data=mock_assets,
-            score_threshold=9.9,  # impossível
+            score_threshold=99.9,  # impossível — escala 0-100
         )
         test_db.close()
 
@@ -505,7 +505,7 @@ class TestOptimizeWithConstraints:
             "earnings_growth_12m": 0.0,
         }
         result = calculate_alpha_score(**scraper_data)
-        assert 0 <= result["alpha_score"] <= 10
+        assert 0 <= result["alpha_score"] <= 100
         assert "income_score" in result
         assert "valuation_score" in result
 

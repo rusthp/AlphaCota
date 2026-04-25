@@ -32,6 +32,11 @@ groq>=0.4.0
 # MCP server
 mcp>=1.0.0
 
+# Polymarket trading
+py-clob-client>=0.17,<1.0
+web3>=6.0,<7.0
+eth-account>=0.11,<1.0
+
 # Scraping
 beautifulsoup4>=4.12.0
 feedparser>=6.0.0

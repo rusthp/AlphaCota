@@ -369,7 +369,10 @@ class TestMomentum:
             "MXRF11": [0.02] * 12,
         }
         mock_returns.return_value = (returns_data, {})
-        mock_rank.return_value = [("MXRF11", 0.24), ("HGLG11", 0.12)]
+        mock_rank.return_value = [
+            {"ticker": "MXRF11", "score": 24.0, "retorno_1m_%": 2.0, "retorno_3m_%": 6.0, "retorno_6m_%": 12.0, "retorno_12m_%": 24.0, "classificacao": "forte"},
+            {"ticker": "HGLG11", "score": 12.0, "retorno_1m_%": 1.0, "retorno_3m_%": 3.0, "retorno_6m_%": 6.0, "retorno_12m_%": 12.0, "classificacao": "moderado"},
+        ]
         response = client.get("/api/momentum")
         assert response.status_code == 200
 
@@ -559,12 +562,14 @@ class TestBuildDividendHistory:
         assert len(result) == 2
         assert result[0]["month"] == "2025-01"
 
-    @patch("api.main.fetch_dividends", side_effect=Exception("no dividends"))
-    def test_returns_empty_list_on_fetch_exception(self, _mock):
-        """Lines 285-286: fetch_dividends raises → returns []."""
+    def test_returns_empty_list_on_fetch_exception(self):
+        """When yfinance raises and no fe_data → returns []."""
         from api.main import _build_dividend_history
 
-        result = _build_dividend_history("FAKE11", None)
+        with patch("yfinance.Ticker") as mock_ticker:
+            mock_ticker.return_value.dividends = MagicMock()
+            mock_ticker.return_value.dividends.empty = True
+            result = _build_dividend_history("FAKE11", None)
         assert result == []
 
 

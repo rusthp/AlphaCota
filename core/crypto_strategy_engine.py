@@ -18,7 +18,18 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from core.crypto_indicators import calculate_ema, calculate_macd, calculate_rsi
+from core.crypto_indicators import (
+    calculate_ema,
+    calculate_macd,
+    calculate_rsi,
+    calculate_bollinger,
+    calculate_stochastic,
+    calculate_adx,
+    calculate_supertrend,
+    calculate_williams_r,
+    calculate_cci,
+    calculate_atr as _atr_series,
+)
 from core.crypto_signal_engine import calculate_atr
 from core.crypto_types import CryptoCandle
 
@@ -28,6 +39,14 @@ StrategyName = Literal[
     "macd_momentum",
     "breakout",
     "combined",
+    "bollinger_band",
+    "stochastic",
+    "adx_trend",
+    "supertrend",
+    "williams_r",
+    "cci_momentum",
+    "triple_ema",
+    "volume_breakout",
 ]
 
 
@@ -80,6 +99,14 @@ class BacktestResult:
     equity_curve: list[float]
 
 
+def _ohlc(candles: list[CryptoCandle]) -> tuple[list[float], list[float], list[float]]:
+    return (
+        [c.high for c in candles],
+        [c.low for c in candles],
+        [c.close for c in candles],
+    )
+
+
 _STRATEGIES: list[StrategyMeta] = [
     StrategyMeta(
         name="trend_follow",
@@ -110,6 +137,54 @@ _STRATEGIES: list[StrategyMeta] = [
         label="Combined (All Signals)",
         description="Weighted combination of EMA, MACD, RSI, and volume. Most robust in live trading.",
         default_params={"w_ema": 0.35, "w_macd": 0.30, "w_rsi": 0.20, "w_vol": 0.15, "atr_sl": 1.5, "atr_tp": 3.0},
+    ),
+    StrategyMeta(
+        name="bollinger_band",
+        label="Bollinger Band Reversal",
+        description="Enters long at lower band touch, short at upper band touch. Best in ranging markets. Uses 20-period SMA ± 2σ.",
+        default_params={"bb_period": 20, "bb_std": 2.0, "rsi_confirm": 40, "atr_sl": 1.2, "atr_tp": 2.0},
+    ),
+    StrategyMeta(
+        name="stochastic",
+        label="Stochastic Oscillator",
+        description="Enters on %K/%D bullish/bearish cross in oversold (<20) or overbought (>80) zones. Precise entry timing.",
+        default_params={"k_period": 14, "d_period": 3, "oversold": 20, "overbought": 80, "atr_sl": 1.3, "atr_tp": 2.6},
+    ),
+    StrategyMeta(
+        name="adx_trend",
+        label="ADX Trend Strength",
+        description="Enters only when ADX > 25 AND rising (trend accelerating). Fresh DI crossover with minimum spread determines direction. Avoids re-entries and whipsaws.",
+        default_params={"adx_period": 14, "adx_threshold": 25, "di_min_sep": 5.0, "atr_sl": 1.5, "atr_tp": 4.0},
+    ),
+    StrategyMeta(
+        name="supertrend",
+        label="Supertrend",
+        description="Follows dynamic ATR-based support/resistance bands. Direction flip = entry signal. Period 10, multiplier 3×ATR.",
+        default_params={"st_period": 10, "st_mult": 3.0, "atr_sl": 1.5, "atr_tp": 3.0},
+    ),
+    StrategyMeta(
+        name="williams_r",
+        label="Williams %R",
+        description="Momentum oscillator. Long when %R crosses above -80 (oversold recovery), short when crosses below -20 (overbought fall).",
+        default_params={"wr_period": 14, "oversold": -80, "overbought": -20, "atr_sl": 1.2, "atr_tp": 2.4},
+    ),
+    StrategyMeta(
+        name="cci_momentum",
+        label="CCI Momentum",
+        description="Commodity Channel Index. Long when CCI crosses +100 (uptrend), short when crosses -100 (downtrend). Captures sustained moves.",
+        default_params={"cci_period": 20, "threshold": 100, "atr_sl": 1.5, "atr_tp": 3.0},
+    ),
+    StrategyMeta(
+        name="triple_ema",
+        label="Triple EMA Alignment",
+        description="Requires EMA9 > EMA21 > EMA55 (bull) or EMA9 < EMA21 < EMA55 (bear). All three aligned = high-confidence trend entry.",
+        default_params={"fast": 9, "mid": 21, "slow": 55, "atr_sl": 1.5, "atr_tp": 4.0},
+    ),
+    StrategyMeta(
+        name="volume_breakout",
+        label="Volume Breakout",
+        description="Detects price breakouts on volume spikes (>2× average). Confirms momentum with RSI direction. High conviction moves only.",
+        default_params={"lookback": 20, "vol_mult": 2.0, "rsi_min": 45, "rsi_max": 55, "atr_sl": 1.5, "atr_tp": 3.5},
     ),
 ]
 
@@ -324,12 +399,336 @@ def _combined(candles: list[CryptoCandle], p: dict[str, Any]) -> StrategySignal:
     return StrategySignal("flat", conf, f"combined={composite:.3f} below threshold", entry, 0.0, 0.0, {"ema_score": ema_score, "rsi": round(rsi_val, 2), "composite": round(composite, 4)})
 
 
+def _bollinger_band(candles: list[CryptoCandle], p: dict[str, Any]) -> StrategySignal:
+    bb_period = int(p.get("bb_period", 20))
+    bb_std = float(p.get("bb_std", 2.0))
+    rsi_confirm = float(p.get("rsi_confirm", 40))
+    if len(candles) < bb_period + 5:
+        return StrategySignal("flat", 0.0, "warmup", candles[-1].close, 0.0, 0.0)
+
+    closes = [c.close for c in candles]
+    upper, mid, lower = calculate_bollinger(closes, bb_period, bb_std)
+    rsi_vals = calculate_rsi(closes, 14)
+    atr = calculate_atr(candles, 14)
+    entry = closes[-1]
+
+    u, m, lo = upper[-1], mid[-1], lower[-1]
+    rsi = rsi_vals[-1] if not math.isnan(rsi_vals[-1]) else 50.0
+    if math.isnan(u) or math.isnan(lo):
+        return StrategySignal("flat", 0.0, "warmup", entry, 0.0, 0.0)
+
+    band_width = u - lo
+    if band_width < 1e-9:
+        return StrategySignal("flat", 0.0, "bb_squeeze", entry, 0.0, 0.0)
+
+    pct_b = (entry - lo) / band_width
+
+    if entry <= lo and rsi < rsi_confirm + 10:
+        conf = min(0.88, 0.60 + max(0.0, rsi_confirm - rsi) / rsi_confirm * 0.3)
+        sl, tp = _sl_tp("long", entry, atr, float(p.get("atr_sl", 1.2)), float(p.get("atr_tp", 2.0)))
+        return StrategySignal("long", round(conf, 4), f"bb_lower touch pct_b={pct_b:.3f}", round(entry, 8), round(sl, 8), round(tp, 8), {"pct_b": round(pct_b, 4), "rsi": round(rsi, 2), "bb_mid": round(m, 4)})
+
+    if entry >= u and rsi > (100 - rsi_confirm - 10):
+        conf = min(0.88, 0.60 + max(0.0, rsi - (100 - rsi_confirm)) / rsi_confirm * 0.3)
+        sl, tp = _sl_tp("short", entry, atr, float(p.get("atr_sl", 1.2)), float(p.get("atr_tp", 2.0)))
+        return StrategySignal("short", round(conf, 4), f"bb_upper touch pct_b={pct_b:.3f}", round(entry, 8), round(sl, 8), round(tp, 8), {"pct_b": round(pct_b, 4), "rsi": round(rsi, 2), "bb_mid": round(m, 4)})
+
+    return StrategySignal("flat", 0.0, f"bb_neutral pct_b={pct_b:.3f}", entry, 0.0, 0.0, {"pct_b": round(pct_b, 4), "rsi": round(rsi, 2)})
+
+
+def _stochastic(candles: list[CryptoCandle], p: dict[str, Any]) -> StrategySignal:
+    k_period = int(p.get("k_period", 14))
+    d_period = int(p.get("d_period", 3))
+    oversold = float(p.get("oversold", 20))
+    overbought = float(p.get("overbought", 80))
+    if len(candles) < k_period + d_period + 5:
+        return StrategySignal("flat", 0.0, "warmup", candles[-1].close, 0.0, 0.0)
+
+    highs, lows, closes = _ohlc(candles)
+    pct_k, pct_d = calculate_stochastic(highs, lows, closes, k_period, d_period)
+    atr = calculate_atr(candles, 14)
+    entry = closes[-1]
+
+    k, d = pct_k[-1], pct_d[-1]
+    k_prev, d_prev = pct_k[-2], pct_d[-2]
+    if math.isnan(k) or math.isnan(d) or math.isnan(k_prev) or math.isnan(d_prev):
+        return StrategySignal("flat", 0.0, "warmup", entry, 0.0, 0.0)
+
+    # Bullish cross in oversold zone
+    if k_prev <= d_prev and k > d and k < oversold + 10:
+        conf = min(0.87, 0.62 + max(0.0, oversold - k) / oversold * 0.25)
+        sl, tp = _sl_tp("long", entry, atr, float(p.get("atr_sl", 1.3)), float(p.get("atr_tp", 2.6)))
+        return StrategySignal("long", round(conf, 4), f"stoch_cross_up k={k:.1f} d={d:.1f}", round(entry, 8), round(sl, 8), round(tp, 8), {"pct_k": round(k, 2), "pct_d": round(d, 2)})
+
+    # Bearish cross in overbought zone
+    if k_prev >= d_prev and k < d and k > overbought - 10:
+        conf = min(0.87, 0.62 + max(0.0, k - overbought) / (100 - overbought) * 0.25)
+        sl, tp = _sl_tp("short", entry, atr, float(p.get("atr_sl", 1.3)), float(p.get("atr_tp", 2.6)))
+        return StrategySignal("short", round(conf, 4), f"stoch_cross_dn k={k:.1f} d={d:.1f}", round(entry, 8), round(sl, 8), round(tp, 8), {"pct_k": round(k, 2), "pct_d": round(d, 2)})
+
+    return StrategySignal("flat", 0.0, f"stoch_neutral k={k:.1f}", entry, 0.0, 0.0, {"pct_k": round(k, 2), "pct_d": round(d, 2)})
+
+
+def _adx_trend(candles: list[CryptoCandle], p: dict[str, Any]) -> StrategySignal:
+    adx_period = int(p.get("adx_period", 14))
+    adx_threshold = float(p.get("adx_threshold", 25))
+    di_min_sep = float(p.get("di_min_sep", 5.0))
+    cross_lookback = int(p.get("cross_lookback", 5))  # candles to look back for DI cross
+    if len(candles) < adx_period * 3 + 5:
+        return StrategySignal("flat", 0.0, "warmup", candles[-1].close, 0.0, 0.0)
+
+    highs, lows, closes = _ohlc(candles)
+    adx_vals, di_plus, di_minus = calculate_adx(highs, lows, closes, adx_period)
+    atr = calculate_atr(candles, 14)
+    entry = closes[-1]
+
+    adx_v = adx_vals[-1]
+    dp, dm = di_plus[-1], di_minus[-1]
+
+    if math.isnan(adx_v) or math.isnan(dp) or math.isnan(dm):
+        return StrategySignal("flat", 0.0, "warmup", entry, 0.0, 0.0)
+
+    inds = {"adx": round(adx_v, 2), "di_plus": round(dp, 2), "di_minus": round(dm, 2)}
+
+    # 1. ADX must be above threshold (strong trend)
+    if adx_v < adx_threshold:
+        return StrategySignal("flat", 0.0, f"adx_weak={adx_v:.1f}", entry, 0.0, 0.0, inds)
+
+    # 2. DI lines must have meaningful separation (filters noisy borderline crosses)
+    di_spread = abs(dp - dm)
+    if di_spread < di_min_sep:
+        return StrategySignal("flat", 0.0, f"di_spread_low={di_spread:.1f}", entry, 0.0, 0.0, inds)
+
+    # 3. Scan last `cross_lookback` candles for a fresh DI crossover.
+    #    ADX is lagging — the cross happens 1-3 candles before ADX confirms the trend.
+    n = len(di_plus)
+    scan_start = max(1, n - cross_lookback)
+    long_cross_candles_ago = -1
+    short_cross_candles_ago = -1
+    for j in range(scan_start, n):
+        if math.isnan(di_plus[j]) or math.isnan(di_minus[j]):
+            continue
+        if math.isnan(di_plus[j - 1]) or math.isnan(di_minus[j - 1]):
+            continue
+        if di_plus[j] > di_minus[j] and di_plus[j - 1] <= di_minus[j - 1]:
+            long_cross_candles_ago = n - 1 - j
+        if di_minus[j] > di_plus[j] and di_minus[j - 1] <= di_plus[j - 1]:
+            short_cross_candles_ago = n - 1 - j
+
+    # 4. Current DI direction must match the recent cross (avoids stale crosses
+    #    that have since reversed)
+    trend_strength = (adx_v - adx_threshold) / (100 - adx_threshold)
+    conf = min(0.90, 0.65 + trend_strength * 0.25)
+
+    if long_cross_candles_ago >= 0 and dp > dm:
+        sl, tp = _sl_tp("long", entry, atr, float(p.get("atr_sl", 1.5)), float(p.get("atr_tp", 4.0)))
+        return StrategySignal(
+            "long", round(conf, 4),
+            f"adx={adx_v:.1f} DI+cross {long_cross_candles_ago}c ago sep={di_spread:.1f}",
+            round(entry, 8), round(sl, 8), round(tp, 8), inds,
+        )
+
+    if short_cross_candles_ago >= 0 and dm > dp:
+        sl, tp = _sl_tp("short", entry, atr, float(p.get("atr_sl", 1.5)), float(p.get("atr_tp", 4.0)))
+        return StrategySignal(
+            "short", round(conf, 4),
+            f"adx={adx_v:.1f} DI-cross {short_cross_candles_ago}c ago sep={di_spread:.1f}",
+            round(entry, 8), round(sl, 8), round(tp, 8), inds,
+        )
+
+    return StrategySignal("flat", 0.0, f"adx={adx_v:.1f} no_recent_cross sep={di_spread:.1f}", entry, 0.0, 0.0, inds)
+
+
+def _supertrend_strategy(candles: list[CryptoCandle], p: dict[str, Any]) -> StrategySignal:
+    st_period = int(p.get("st_period", 10))
+    st_mult = float(p.get("st_mult", 3.0))
+    if len(candles) < st_period + 5:
+        return StrategySignal("flat", 0.0, "warmup", candles[-1].close, 0.0, 0.0)
+
+    highs, lows, closes = _ohlc(candles)
+    st_vals, directions = calculate_supertrend(highs, lows, closes, st_period, st_mult)
+    atr = calculate_atr(candles, 14)
+    entry = closes[-1]
+
+    current_dir = directions[-1]
+    prev_dir = directions[-2]
+    st = st_vals[-1]
+
+    if current_dir == 0 or math.isnan(st):
+        return StrategySignal("flat", 0.0, "warmup", entry, 0.0, 0.0)
+
+    # Direction flip = strong signal; sustained = moderate
+    flipped = current_dir != prev_dir and prev_dir != 0
+    dist_pct = abs(entry - st) / entry
+    conf = min(0.90, 0.70 if flipped else 0.60 + dist_pct * 5)
+
+    if current_dir == -1:  # price above supertrend = bullish
+        sl, tp = _sl_tp("long", entry, atr, float(p.get("atr_sl", 1.5)), float(p.get("atr_tp", 3.0)))
+        reason = "st_flip_bull" if flipped else f"st_bull st={st:.4f}"
+        return StrategySignal("long", round(conf, 4), reason, round(entry, 8), round(sl, 8), round(tp, 8), {"supertrend": round(st, 4), "direction": current_dir})
+
+    # current_dir == 1: price below supertrend = bearish
+    sl, tp = _sl_tp("short", entry, atr, float(p.get("atr_sl", 1.5)), float(p.get("atr_tp", 3.0)))
+    reason = "st_flip_bear" if flipped else f"st_bear st={st:.4f}"
+    return StrategySignal("short", round(conf, 4), reason, round(entry, 8), round(sl, 8), round(tp, 8), {"supertrend": round(st, 4), "direction": current_dir})
+
+
+def _williams_r_strategy(candles: list[CryptoCandle], p: dict[str, Any]) -> StrategySignal:
+    wr_period = int(p.get("wr_period", 14))
+    oversold = float(p.get("oversold", -80))
+    overbought = float(p.get("overbought", -20))
+    if len(candles) < wr_period + 5:
+        return StrategySignal("flat", 0.0, "warmup", candles[-1].close, 0.0, 0.0)
+
+    highs, lows, closes = _ohlc(candles)
+    wr = calculate_williams_r(highs, lows, closes, wr_period)
+    atr = calculate_atr(candles, 14)
+    entry = closes[-1]
+
+    wr_now, wr_prev = wr[-1], wr[-2]
+    if math.isnan(wr_now) or math.isnan(wr_prev):
+        return StrategySignal("flat", 0.0, "warmup", entry, 0.0, 0.0)
+
+    # Cross from oversold back into neutral (recovery)
+    if wr_prev <= oversold and wr_now > oversold:
+        conf = min(0.86, 0.65 + abs(wr_prev - oversold) / abs(oversold) * 0.2)
+        sl, tp = _sl_tp("long", entry, atr, float(p.get("atr_sl", 1.2)), float(p.get("atr_tp", 2.4)))
+        return StrategySignal("long", round(conf, 4), f"wr_oversold_recovery wr={wr_now:.1f}", round(entry, 8), round(sl, 8), round(tp, 8), {"williams_r": round(wr_now, 2)})
+
+    # Cross from overbought back down
+    if wr_prev >= overbought and wr_now < overbought:
+        conf = min(0.86, 0.65 + abs(wr_prev - overbought) / abs(overbought) * 0.2)
+        sl, tp = _sl_tp("short", entry, atr, float(p.get("atr_sl", 1.2)), float(p.get("atr_tp", 2.4)))
+        return StrategySignal("short", round(conf, 4), f"wr_overbought_drop wr={wr_now:.1f}", round(entry, 8), round(sl, 8), round(tp, 8), {"williams_r": round(wr_now, 2)})
+
+    return StrategySignal("flat", 0.0, f"wr_neutral={wr_now:.1f}", entry, 0.0, 0.0, {"williams_r": round(wr_now, 2)})
+
+
+def _cci_momentum(candles: list[CryptoCandle], p: dict[str, Any]) -> StrategySignal:
+    cci_period = int(p.get("cci_period", 20))
+    threshold = float(p.get("threshold", 100))
+    if len(candles) < cci_period + 5:
+        return StrategySignal("flat", 0.0, "warmup", candles[-1].close, 0.0, 0.0)
+
+    highs, lows, closes = _ohlc(candles)
+    cci_vals = calculate_cci(highs, lows, closes, cci_period)
+    atr = calculate_atr(candles, 14)
+    entry = closes[-1]
+
+    cci_now, cci_prev = cci_vals[-1], cci_vals[-2]
+    if math.isnan(cci_now) or math.isnan(cci_prev):
+        return StrategySignal("flat", 0.0, "warmup", entry, 0.0, 0.0)
+
+    # CCI crosses +100 upward = trend entry
+    if cci_prev < threshold and cci_now >= threshold:
+        conf = min(0.87, 0.62 + min(0.25, (cci_now - threshold) / threshold * 0.15))
+        sl, tp = _sl_tp("long", entry, atr, float(p.get("atr_sl", 1.5)), float(p.get("atr_tp", 3.0)))
+        return StrategySignal("long", round(conf, 4), f"cci_cross_up={cci_now:.1f}", round(entry, 8), round(sl, 8), round(tp, 8), {"cci": round(cci_now, 2)})
+
+    # CCI crosses -100 downward = short entry
+    if cci_prev > -threshold and cci_now <= -threshold:
+        conf = min(0.87, 0.62 + min(0.25, abs(cci_now + threshold) / threshold * 0.15))
+        sl, tp = _sl_tp("short", entry, atr, float(p.get("atr_sl", 1.5)), float(p.get("atr_tp", 3.0)))
+        return StrategySignal("short", round(conf, 4), f"cci_cross_dn={cci_now:.1f}", round(entry, 8), round(sl, 8), round(tp, 8), {"cci": round(cci_now, 2)})
+
+    return StrategySignal("flat", 0.0, f"cci_neutral={cci_now:.1f}", entry, 0.0, 0.0, {"cci": round(cci_now, 2)})
+
+
+def _triple_ema(candles: list[CryptoCandle], p: dict[str, Any]) -> StrategySignal:
+    fast = int(p.get("fast", 9))
+    mid = int(p.get("mid", 21))
+    slow = int(p.get("slow", 55))
+    if len(candles) < slow + 10:
+        return StrategySignal("flat", 0.0, "warmup", candles[-1].close, 0.0, 0.0)
+
+    closes = [c.close for c in candles]
+    ef = calculate_ema(closes, fast)
+    em = calculate_ema(closes, mid)
+    es = calculate_ema(closes, slow)
+    atr = calculate_atr(candles, 14)
+    entry = closes[-1]
+
+    f, m, s = ef[-1], em[-1], es[-1]
+    f_p, m_p, s_p = ef[-2], em[-2], es[-2]
+    if any(math.isnan(v) for v in (f, m, s, f_p, m_p, s_p)):
+        return StrategySignal("flat", 0.0, "warmup", entry, 0.0, 0.0)
+
+    # Perfect bull alignment
+    if f > m > s:
+        was_aligned = f_p > m_p > s_p
+        sep = (f - s) / s
+        conf = min(0.92, 0.70 + sep * 10) if not was_aligned else min(0.80, 0.60 + sep * 8)
+        sl, tp = _sl_tp("long", entry, atr, float(p.get("atr_sl", 1.5)), float(p.get("atr_tp", 4.0)))
+        reason = "triple_ema_align_bull" if not was_aligned else "triple_ema_bull_cont"
+        return StrategySignal("long", round(conf, 4), reason, round(entry, 8), round(sl, 8), round(tp, 8), {"ema_fast": round(f, 4), "ema_mid": round(m, 4), "ema_slow": round(s, 4)})
+
+    # Perfect bear alignment
+    if f < m < s:
+        was_aligned = f_p < m_p < s_p
+        sep = (s - f) / s
+        conf = min(0.92, 0.70 + sep * 10) if not was_aligned else min(0.80, 0.60 + sep * 8)
+        sl, tp = _sl_tp("short", entry, atr, float(p.get("atr_sl", 1.5)), float(p.get("atr_tp", 4.0)))
+        reason = "triple_ema_align_bear" if not was_aligned else "triple_ema_bear_cont"
+        return StrategySignal("short", round(conf, 4), reason, round(entry, 8), round(sl, 8), round(tp, 8), {"ema_fast": round(f, 4), "ema_mid": round(m, 4), "ema_slow": round(s, 4)})
+
+    return StrategySignal("flat", 0.0, "triple_ema_mixed", entry, 0.0, 0.0, {"ema_fast": round(f, 4), "ema_slow": round(s, 4)})
+
+
+def _volume_breakout(candles: list[CryptoCandle], p: dict[str, Any]) -> StrategySignal:
+    lookback = int(p.get("lookback", 20))
+    vol_mult = float(p.get("vol_mult", 2.0))
+    rsi_min = float(p.get("rsi_min", 45))
+    rsi_max = float(p.get("rsi_max", 55))
+    if len(candles) < lookback + 10:
+        return StrategySignal("flat", 0.0, "warmup", candles[-1].close, 0.0, 0.0)
+
+    closes = [c.close for c in candles]
+    volumes = [c.volume for c in candles]
+    rsi_vals = calculate_rsi(closes, 14)
+    atr = calculate_atr(candles, 14)
+    entry = closes[-1]
+
+    avg_vol = sum(volumes[-(lookback + 1):-1]) / lookback
+    cur_vol = volumes[-1]
+    rel_vol = cur_vol / (avg_vol + 1e-9)
+
+    rsi = rsi_vals[-1] if not math.isnan(rsi_vals[-1]) else 50.0
+
+    if rel_vol < vol_mult:
+        return StrategySignal("flat", 0.0, f"vol_low rel={rel_vol:.2f}", entry, 0.0, 0.0, {"rel_vol": round(rel_vol, 3), "rsi": round(rsi, 2)})
+
+    # Price direction from last two closes
+    prev_close = closes[-2]
+    price_up = entry > prev_close
+    vol_boost = min(0.20, (rel_vol - vol_mult) / vol_mult * 0.1)
+
+    if price_up and rsi > rsi_max:
+        conf = min(0.90, 0.68 + vol_boost)
+        sl, tp = _sl_tp("long", entry, atr, float(p.get("atr_sl", 1.5)), float(p.get("atr_tp", 3.5)))
+        return StrategySignal("long", round(conf, 4), f"vol_breakout_up rel={rel_vol:.2f} rsi={rsi:.1f}", round(entry, 8), round(sl, 8), round(tp, 8), {"rel_vol": round(rel_vol, 3), "rsi": round(rsi, 2)})
+
+    if not price_up and rsi < rsi_min:
+        conf = min(0.90, 0.68 + vol_boost)
+        sl, tp = _sl_tp("short", entry, atr, float(p.get("atr_sl", 1.5)), float(p.get("atr_tp", 3.5)))
+        return StrategySignal("short", round(conf, 4), f"vol_breakout_dn rel={rel_vol:.2f} rsi={rsi:.1f}", round(entry, 8), round(sl, 8), round(tp, 8), {"rel_vol": round(rel_vol, 3), "rsi": round(rsi, 2)})
+
+    return StrategySignal("flat", 0.0, f"vol_spike_no_confirm rsi={rsi:.1f}", entry, 0.0, 0.0, {"rel_vol": round(rel_vol, 3), "rsi": round(rsi, 2)})
+
+
 _DISPATCH: dict[str, Any] = {
     "trend_follow": _trend_follow,
     "rsi_reversal": _rsi_reversal,
     "macd_momentum": _macd_momentum,
     "breakout": _breakout,
     "combined": _combined,
+    "bollinger_band": _bollinger_band,
+    "stochastic": _stochastic,
+    "adx_trend": _adx_trend,
+    "supertrend": _supertrend_strategy,
+    "williams_r": _williams_r_strategy,
+    "cci_momentum": _cci_momentum,
+    "triple_ema": _triple_ema,
+    "volume_breakout": _volume_breakout,
 }
 
 

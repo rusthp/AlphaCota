@@ -15,7 +15,7 @@ except ImportError:
 import logging
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
-from fastapi import FastAPI, Depends, HTTPException, Query, status
+from fastapi import FastAPI, Body, Depends, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.security import OAuth2PasswordRequestForm
@@ -66,7 +66,10 @@ app = FastAPI(
 # CORS — permite o frontend React (Vite dev server) acessar a API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8080", "http://localhost:5173", "http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:8080", "http://localhost:5173", "http://localhost:3000",
+        "https://trader.linkvoxel.com.br",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1840,7 +1843,16 @@ def crypto_status():
     conn = _crypto_conn()
     try:
         positions = get_open_positions(conn, mode)
-        balance = get_balance_estimate(conn, mode)
+        if mode == "live":
+            try:
+                from core.crypto_live_executor import get_account_balance
+                balance = get_account_balance("USDT")
+            except Exception:
+                initial = float(_os.getenv("CRYPTO_INITIAL_BALANCE_USD", "1000.0"))
+                balance = get_balance_estimate(conn, initial, mode)
+        else:
+            initial = float(_os.getenv("CRYPTO_INITIAL_BALANCE_USD", "1000.0"))
+            balance = get_balance_estimate(conn, initial, mode)
     finally:
         conn.close()
     return {
@@ -1853,31 +1865,36 @@ def crypto_status():
 
 @app.get("/api/crypto/positions")
 def crypto_positions():
-    """Return all currently open positions."""
+    """Return all currently open positions with live current_price per symbol."""
     import os as _os
     from core.crypto_ledger import get_open_positions
+    from core.crypto_data_engine import fetch_ticker_price
     mode = _os.getenv("CRYPTO_MODE", "paper")
     conn = _crypto_conn()
     try:
         rows = get_open_positions(conn, mode)
     finally:
         conn.close()
-    return {
-        "positions": [
-            {
-                "id": p.id,
-                "symbol": p.symbol,
-                "side": p.side,
-                "entry_price": p.entry_price,
-                "qty_usd": p.qty,
-                "stop_loss": p.stop_loss,
-                "take_profit": p.take_profit,
-                "opened_at": p.opened_at,
-                "mode": p.mode,
-            }
-            for p in rows
-        ]
-    }
+
+    result = []
+    for p in rows:
+        try:
+            current_price = fetch_ticker_price(p.symbol)
+        except Exception:
+            current_price = p.entry_price
+        result.append({
+            "id": p.id,
+            "symbol": p.symbol,
+            "side": p.side,
+            "entry_price": p.entry_price,
+            "qty_usd": p.qty,
+            "stop_loss": p.stop_loss,
+            "take_profit": p.take_profit,
+            "opened_at": p.opened_at,
+            "mode": p.mode,
+            "current_price": round(current_price, 8),
+        })
+    return {"positions": result}
 
 
 @app.get("/api/crypto/trades")
@@ -1960,22 +1977,26 @@ def crypto_balance():
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc))
     from core.crypto_ledger import get_balance_estimate
+    import os as _os2
     conn = _crypto_conn()
     try:
-        bal = get_balance_estimate(conn, "paper")
+        initial = float(_os2.getenv("CRYPTO_INITIAL_BALANCE_USD", "1000.0"))
+        bal = get_balance_estimate(conn, initial, "paper")
     finally:
         conn.close()
     return {"mode": "paper", "usdt": round(bal, 2), "source": "ledger"}
 
 
 @app.post("/api/crypto/mode")
-def crypto_set_mode(body: dict):
+def crypto_set_mode(body: dict = Body(...)):
     """Switch bot mode between paper and live (writes CRYPTO_MODE to .env)."""
     new_mode = body.get("mode", "").lower()
     if new_mode not in ("paper", "live"):
         raise HTTPException(status_code=400, detail="mode must be 'paper' or 'live'")
     env_path = ".env"
     try:
+        import os as _os
+        import tempfile as _tf
         with open(env_path, "r") as f:
             content = f.read()
         if "CRYPTO_MODE=" in content:
@@ -1986,9 +2007,19 @@ def crypto_set_mode(body: dict):
             new_content = "\n".join(lines) + "\n"
         else:
             new_content = content + f"\nCRYPTO_MODE={new_mode}\n"
-        with open(env_path, "w") as f:
-            f.write(new_content)
-        import os as _os
+        # Atomic write: write to temp file then rename (avoids truncation on crash)
+        dir_ = _os.path.dirname(_os.path.abspath(env_path))
+        fd, tmp = _tf.mkstemp(dir=dir_)
+        try:
+            with _os.fdopen(fd, "w") as f:
+                f.write(new_content)
+            _os.replace(tmp, env_path)
+        except Exception:
+            try:
+                _os.unlink(tmp)
+            except Exception:
+                pass
+            raise
         _os.environ["CRYPTO_MODE"] = new_mode
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
@@ -2016,6 +2047,154 @@ def crypto_unkill():
 
 
 # ---------------------------------------------------------------------------
+# Crypto loop process management
+# ---------------------------------------------------------------------------
+
+_PID_FILE = "data/CRYPTO_LOOP.pid"
+_KILL_FILE_PATH = "data/CRYPTO_KILL"
+
+
+def _loop_pid() -> int | None:
+    """Return PID from file if it exists, else None."""
+    from pathlib import Path as _Path
+    p = _Path(_PID_FILE)
+    if not p.exists():
+        return None
+    try:
+        return int(p.read_text().strip())
+    except Exception:
+        return None
+
+
+def _pid_alive(pid: int) -> bool:
+    """Return True if process with given PID is running (cross-platform)."""
+    import os as _os
+    try:
+        _os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, PermissionError, OSError):
+        return False
+
+
+@app.get("/api/crypto/loop/status")
+def crypto_loop_status():
+    """Return whether the autonomous trading loop process is running."""
+    pid = _loop_pid()
+    running = pid is not None and _pid_alive(pid)
+    return {"running": running, "pid": pid if running else None}
+
+
+@app.post("/api/crypto/loop/start")
+def crypto_loop_start():
+    """Spawn the autonomous trading loop as a background subprocess."""
+    import sys as _sys
+    import subprocess as _sp
+    from pathlib import Path as _Path
+    import os as _os
+
+    pid = _loop_pid()
+    if pid is not None and _pid_alive(pid):
+        return {"running": True, "pid": pid, "message": "Loop already running"}
+
+    # Remove kill-switch if present so the loop doesn't exit immediately
+    kill_file = _Path(_KILL_FILE_PATH)
+    if kill_file.exists():
+        kill_file.unlink()
+
+    mode = _os.getenv("CRYPTO_MODE", "paper")
+    # Windows requires DETACHED_PROCESS + CREATE_NEW_PROCESS_GROUP to truly
+    # decouple the child from the parent's console / process group.
+    # On Unix, start_new_session=True calls setsid() which is the correct equivalent.
+    if _os.name == "nt":
+        kwargs = {"creationflags": _sp.CREATE_NEW_PROCESS_GROUP | _sp.DETACHED_PROCESS}
+    else:
+        kwargs = {"start_new_session": True}
+
+    proc = _sp.Popen(
+        [_sys.executable, "-m", "core.crypto_loop", "--mode", mode],
+        stdout=_sp.DEVNULL,
+        stderr=_sp.DEVNULL,
+        **kwargs,
+    )
+    _Path(_PID_FILE).parent.mkdir(parents=True, exist_ok=True)
+    _Path(_PID_FILE).write_text(str(proc.pid))
+    return {"running": True, "pid": proc.pid, "message": f"Loop started in {mode} mode (PID {proc.pid})"}
+
+
+@app.post("/api/crypto/loop/stop")
+def crypto_loop_stop():
+    """Activate kill-switch and return immediately; the loop exits on next iteration check."""
+    import os as _os
+    from pathlib import Path as _Path
+
+    kill_file = _Path(_KILL_FILE_PATH)
+    kill_file.parent.mkdir(parents=True, exist_ok=True)
+    kill_file.touch()
+
+    pid = _loop_pid()
+    if pid is None or not _pid_alive(pid):
+        _Path(_PID_FILE).unlink(missing_ok=True)
+        return {"running": False, "message": "Loop was not running"}
+
+    # On Windows SIGTERM terminates immediately; on Unix it's a gentle signal.
+    # We rely on the kill-switch file as the primary stop mechanism (no blocking wait).
+    # The loop checks the file every iteration and exits cleanly.
+    if _os.name != "nt":
+        try:
+            _os.kill(pid, 15)
+        except Exception:
+            pass
+
+    _Path(_PID_FILE).unlink(missing_ok=True)
+    return {"running": False, "message": f"Stop signal sent to loop (PID {pid}). Will exit after current iteration."}
+
+
+# ---------------------------------------------------------------------------
+# Crypto bot configuration (TP/SL multipliers, active strategy)
+# ---------------------------------------------------------------------------
+
+_CONFIG_FILE = "data/crypto_bot_config.json"
+
+
+def _read_bot_config() -> dict:
+    from pathlib import Path as _Path
+    import json as _json
+    p = _Path(_CONFIG_FILE)
+    if p.exists():
+        try:
+            return _json.loads(p.read_text())
+        except Exception:
+            pass
+    return {"tp_mult": 3.0, "sl_mult": 1.5, "strategy": "combined", "pair": "BTC/USDT"}
+
+
+def _write_bot_config(cfg: dict) -> None:
+    from pathlib import Path as _Path
+    import json as _json
+    p = _Path(_CONFIG_FILE)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(_json.dumps(cfg, indent=2))
+
+
+@app.get("/api/crypto/config")
+def crypto_get_config():
+    """Return current bot configuration (TP/SL multipliers, strategy, pair)."""
+    return _read_bot_config()
+
+
+@app.post("/api/crypto/config")
+def crypto_save_config(body: dict = Body(...)):
+    """Persist bot configuration (TP/SL multipliers, strategy, pair)."""
+    allowed = {"tp_mult", "sl_mult", "strategy", "pair"}
+    cfg = _read_bot_config()
+    for key in allowed:
+        if key in body:
+            cfg[key] = body[key]
+    _write_bot_config(cfg)
+    return {"saved": True, "config": cfg}
+
+
+# ---------------------------------------------------------------------------
 # Crypto strategies, backtest, and market scan
 # ---------------------------------------------------------------------------
 
@@ -2023,7 +2202,7 @@ def crypto_unkill():
 _CRYPTO_PAIRS = [
     "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT",
     "XRPUSDT", "ADAUSDT", "AVAXUSDT", "DOGEUSDT",
-    "DOTUSDT", "LINKUSDT", "MATICUSDT", "UNIUSDT",
+    "DOTUSDT", "LINKUSDT", "UNIUSDT",
 ]
 
 
@@ -2073,7 +2252,7 @@ def crypto_signals(strategy: str = "combined"):
 
 
 @app.post("/api/crypto/backtest")
-def crypto_backtest(body: dict):
+def crypto_backtest(body: dict = Body(...)):
     """
     Run a walk-forward backtest of a strategy on a given symbol.
 
@@ -2189,9 +2368,17 @@ def crypto_market_scan(strategy: str = "combined", interval: str = "15m"):
 def crypto_indicators(symbol: str, interval: str = "15m", limit: int = 100):
     """Return full indicator snapshot for a single symbol."""
     from core.crypto_data_engine import fetch_candles
-    from core.crypto_indicators import calculate_rsi, calculate_macd, calculate_ema
+    from core.crypto_indicators import (
+        calculate_rsi, calculate_macd, calculate_ema,
+        calculate_bollinger, calculate_stochastic, calculate_adx,
+        calculate_supertrend, calculate_williams_r, calculate_cci,
+    )
     from core.crypto_signal_engine import calculate_atr
     import math as _math
+
+    def _safe(vals: list, digits: int = 6):
+        v = vals[-1] if vals else float("nan")
+        return round(v, digits) if not _math.isnan(v) else None
 
     symbol = symbol.upper()
     try:
@@ -2200,6 +2387,8 @@ def crypto_indicators(symbol: str, interval: str = "15m", limit: int = 100):
         raise HTTPException(status_code=502, detail=str(exc))
 
     closes = [c.close for c in candles]
+    highs = [c.high for c in candles]
+    lows = [c.low for c in candles]
     volumes = [c.volume for c in candles]
 
     rsi_vals = calculate_rsi(closes, 14)
@@ -2207,32 +2396,320 @@ def crypto_indicators(symbol: str, interval: str = "15m", limit: int = 100):
 
     ema20 = calculate_ema(closes, 20)
     ema50 = calculate_ema(closes, 50)
+    ema9 = calculate_ema(closes, 9)
+    ema21 = calculate_ema(closes, 21)
     macd_line, sig_line, hist = calculate_macd(closes, 12, 26, 9)
     atr = calculate_atr(candles, 14)
+
+    upper_bb, mid_bb, lower_bb = calculate_bollinger(closes, 20, 2.0)
+    pct_k, pct_d = calculate_stochastic(highs, lows, closes, 14, 3)
+    wr = calculate_williams_r(highs, lows, closes, 14)
+    cci = calculate_cci(highs, lows, closes, 20)
+    adx_vals, di_plus, di_minus = calculate_adx(highs, lows, closes, 14)
+    st_vals, st_dir = calculate_supertrend(highs, lows, closes, 10, 3.0)
 
     avg_vol = sum(volumes[-20:]) / 20 if len(volumes) >= 20 else 1.0
     rel_vol = volumes[-1] / (avg_vol + 1e-9) if avg_vol > 0 else 1.0
 
+    price = closes[-1] if closes else 0.0
+    bb_width = (upper_bb[-1] - lower_bb[-1]) if upper_bb[-1] and lower_bb[-1] and not _math.isnan(upper_bb[-1]) else 0.0
+    pct_b = ((price - lower_bb[-1]) / bb_width) if bb_width > 0 else 0.5
+
+    adx_v = adx_vals[-1] if adx_vals and not _math.isnan(adx_vals[-1]) else 0.0
+    stoch_k = pct_k[-1] if pct_k and not _math.isnan(pct_k[-1]) else 50.0
+    wr_v = wr[-1] if wr and not _math.isnan(wr[-1]) else -50.0
+    cci_v = cci[-1] if cci and not _math.isnan(cci[-1]) else 0.0
+    st_direction = st_dir[-1] if st_dir else 0
+
     return {
         "symbol": symbol,
         "interval": interval,
-        "price": closes[-1] if closes else 0.0,
+        "price": price,
+        # RSI
         "rsi": round(rsi, 2),
         "rsi_signal": "buy" if rsi < 30 else "sell" if rsi > 70 else "neutral",
-        "ema20": round(ema20[-1], 6) if ema20 and not _math.isnan(ema20[-1]) else None,
-        "ema50": round(ema50[-1], 6) if ema50 and not _math.isnan(ema50[-1]) else None,
+        # EMA
+        "ema9": _safe(ema9),
+        "ema20": _safe(ema20),
+        "ema21": _safe(ema21),
+        "ema50": _safe(ema50),
         "ma_signal": "buy" if (not _math.isnan(ema20[-1]) and not _math.isnan(ema50[-1]) and ema20[-1] > ema50[-1]) else "sell",
-        "macd": round(macd_line[-1], 6) if macd_line and not _math.isnan(macd_line[-1]) else None,
-        "macd_signal": round(sig_line[-1], 6) if sig_line and not _math.isnan(sig_line[-1]) else None,
-        "macd_hist": round(hist[-1], 6) if hist and not _math.isnan(hist[-1]) else None,
+        "triple_ema_aligned": (
+            "bull" if (not any(_math.isnan(v) for v in [ema9[-1], ema21[-1], ema50[-1]]) and ema9[-1] > ema21[-1] > ema50[-1])
+            else "bear" if (not any(_math.isnan(v) for v in [ema9[-1], ema21[-1], ema50[-1]]) and ema9[-1] < ema21[-1] < ema50[-1])
+            else "mixed"
+        ),
+        # MACD
+        "macd": _safe(macd_line),
+        "macd_signal": _safe(sig_line),
+        "macd_hist": _safe(hist),
         "macd_signal_label": "buy" if (hist and not _math.isnan(hist[-1]) and hist[-1] > 0) else "sell",
+        # ATR
         "atr": round(atr, 6),
-        "atr_pct": round(atr / closes[-1] * 100, 3) if closes[-1] > 0 else 0.0,
+        "atr_pct": round(atr / price * 100, 3) if price > 0 else 0.0,
+        # Bollinger Bands
+        "bb_upper": _safe(upper_bb, 4),
+        "bb_mid": _safe(mid_bb, 4),
+        "bb_lower": _safe(lower_bb, 4),
+        "bb_pct_b": round(pct_b, 4),
+        "bb_signal": "buy" if pct_b < 0.05 else "sell" if pct_b > 0.95 else "neutral",
+        # Stochastic
+        "stoch_k": round(stoch_k, 2),
+        "stoch_d": _safe(pct_d, 2),
+        "stoch_signal": "buy" if stoch_k < 20 else "sell" if stoch_k > 80 else "neutral",
+        # Williams %R
+        "williams_r": round(wr_v, 2),
+        "wr_signal": "buy" if wr_v < -80 else "sell" if wr_v > -20 else "neutral",
+        # CCI
+        "cci": round(cci_v, 2),
+        "cci_signal": "buy" if cci_v < -100 else "sell" if cci_v > 100 else "neutral",
+        # ADX
+        "adx": round(adx_v, 2),
+        "di_plus": _safe(di_plus, 2),
+        "di_minus": _safe(di_minus, 2),
+        "adx_trend": "strong" if adx_v > 25 else "weak",
+        "adx_signal": (
+            "buy" if (adx_v > 25 and not _math.isnan(di_plus[-1]) and not _math.isnan(di_minus[-1]) and di_plus[-1] > di_minus[-1])
+            else "sell" if (adx_v > 25 and not _math.isnan(di_plus[-1]) and not _math.isnan(di_minus[-1]) and di_minus[-1] > di_plus[-1])
+            else "neutral"
+        ),
+        # Supertrend
+        "supertrend": _safe(st_vals, 4),
+        "supertrend_direction": st_direction,
+        "supertrend_signal": "buy" if st_direction == -1 else "sell" if st_direction == 1 else "neutral",
+        # Volume
         "volume": round(volumes[-1], 2) if volumes else 0.0,
         "relative_volume": round(rel_vol, 3),
         "volume_signal": "buy" if rel_vol > 1.5 else "sell" if rel_vol < 0.5 else "neutral",
+        # OHLCV history
         "ohlcv": [
             {"t": c.timestamp, "o": c.open, "h": c.high, "l": c.low, "c": c.close, "v": c.volume}
             for c in candles[-50:]
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# ML endpoints
+# ---------------------------------------------------------------------------
+
+class _MLTrainRequest(BaseModel):
+    symbols: list[str] | None = None
+    interval: str = "15m"
+    days: int = 365
+    download: bool = True
+
+
+@app.post("/api/crypto/ml/train")
+def crypto_ml_train(req: _MLTrainRequest | None = Body(default=None)):
+    """Kick off ML model training. Downloads data and trains LightGBM.
+
+    Warning: may take 5–15 minutes depending on days and number of pairs.
+    Run this once; model persists to .models/crypto_lgbm.pkl.
+    """
+    from core.crypto_ml_model import train
+    if req is None:
+        req = _MLTrainRequest()
+    try:
+        result = train(
+            symbols=req.symbols,
+            interval=req.interval,
+            days=req.days,
+            download=req.download,
+        )
+        return {
+            "status": "ok",
+            "symbols": result.symbols,
+            "candles_total": result.candles_total,
+            "features": result.features,
+            "cv_accuracy": result.accuracy,
+            "model_path": result.model_path,
+            "trained_at": result.trained_at,
+            "report": result.report,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/crypto/ml/confidence")
+def crypto_ml_confidence_all(interval: str = "15m"):
+    """Return ML model confidence scores for all 12 pairs.
+
+    Uses fetch_candles (TTL-cached Binance REST) to avoid slow Binance bulk downloads
+    that would exceed Cloudflare Workers' 30-second timeout.
+    Requires a trained model — call POST /api/crypto/ml/train first.
+    """
+    from core.crypto_ml_model import get_confidence
+    from core.crypto_data_collector import SYMBOLS
+
+    results = []
+    for sym in SYMBOLS:
+        try:
+            sig = get_confidence(sym, interval)
+            results.append({
+                "symbol": sym,
+                "direction": sig.direction,
+                "confidence": sig.confidence,
+                "prob_long": sig.prob_long,
+                "prob_flat": sig.prob_flat,
+                "prob_short": sig.prob_short,
+                "timestamp": sig.timestamp,
+            })
+        except FileNotFoundError:
+            raise HTTPException(
+                status_code=404,
+                detail="No trained model found. Call POST /api/crypto/ml/train first.",
+            )
+        except Exception as exc:
+            results.append({"symbol": sym, "direction": "flat", "confidence": 0.0, "error": str(exc)})
+
+    return {"interval": interval, "results": results, "timestamp": __import__("time").time()}
+
+
+@app.get("/api/crypto/ml/confidence/{symbol}")
+def crypto_ml_confidence_single(symbol: str, interval: str = "15m"):
+    """Return ML confidence for a single symbol."""
+    from core.crypto_ml_model import load_model, predict
+    from core.crypto_data_collector import download_pair
+
+    try:
+        model = load_model()
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="No trained model. Call POST /api/crypto/ml/train first.")
+
+    symbol = symbol.upper()
+    try:
+        df = download_pair(symbol, interval, days=3, out_dir=None)
+        if df.empty or len(df) < 120:
+            raise HTTPException(status_code=422, detail="Insufficient candle data")
+        sig = predict(model, df.tail(200))
+        return {
+            "symbol": sig.symbol,
+            "direction": sig.direction,
+            "confidence": sig.confidence,
+            "prob_long": sig.prob_long,
+            "prob_flat": sig.prob_flat,
+            "prob_short": sig.prob_short,
+            "timestamp": sig.timestamp,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/crypto/ml/status")
+def crypto_ml_status():
+    """Return metadata about the currently loaded ML model + adaptive training schedule."""
+    from core.crypto_feedback_trainer import get_retrain_status
+    status = get_retrain_status()
+    return status
+
+
+@app.post("/api/crypto/ml/retrain-feedback")
+def crypto_ml_retrain_feedback(mode: str = "paper"):
+    """Trigger an immediate feedback fine-tune using real closed trades.
+
+    Uses real trade outcomes (tp_hit / sl_hit / signal_flip) to fine-tune
+    the LightGBM classifier. Requires at least 50 closed trades in the DB.
+
+    Args:
+        mode: \"paper\" or \"live\" (query param).
+
+    Returns:
+        Result of the feedback fine-tune including accuracy metrics and
+        whether the update was accepted by the accuracy guard.
+    """
+    from core.crypto_ledger import connect_default
+    from core.crypto_ml_model import train_from_trades
+
+    conn = connect_default()
+    try:
+        result = train_from_trades(conn=conn, mode=mode)
+        return {
+            "status": "accepted" if result.accepted else "rejected",
+            "accepted": result.accepted,
+            "trades_used": result.trades_used,
+            "samples_built": result.samples_built,
+            "feedback_accuracy": result.feedback_accuracy,
+            "baseline_accuracy": result.baseline_accuracy,
+            "accuracy_drop": round(result.baseline_accuracy - result.feedback_accuracy, 4),
+            "model_path": result.model_path,
+            "trained_at": result.trained_at,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+@app.get("/api/crypto/ml/adaptive-multipliers")
+def crypto_ml_adaptive_multipliers(mode: str = "paper", window: int = 30):
+    """Return the current adaptive SL/TP multipliers computed from recent win rate.
+
+    This endpoint shows what multipliers the trading loop is currently using,
+    based on the last `window` closed trades.
+
+    Args:
+        mode: \"paper\" or \"live\".
+        window: Number of recent trades to sample (default 30).
+
+    Returns:
+        sl_mult, tp_mult, win_rate, sample_size and regime classification.
+    """
+    from core.crypto_ledger import connect_default
+    from core.crypto_signal_engine import get_adaptive_multipliers
+
+    conn = connect_default()
+    try:
+        sl_mult, tp_mult = get_adaptive_multipliers(conn, mode, window)
+
+        # Also compute win rate for transparency
+        row = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) AS wins
+            FROM (
+                SELECT realized_pnl
+                  FROM crypto_trades
+                 WHERE mode = ?
+                 ORDER BY closed_at DESC
+                 LIMIT ?
+            )
+            """,
+            (mode, window),
+        ).fetchone()
+        total = int(row[0]) if row and row[0] else 0
+        wins  = int(row[1]) if row and row[1] else 0
+        win_rate = round(wins / total, 4) if total > 0 else None
+
+        if total < 10:
+            regime = "insufficient_data"
+        elif win_rate < 0.40:
+            regime = "losing — SL widened, TP tightened"
+        elif win_rate > 0.60:
+            regime = "winning — SL tightened, TP widened"
+        else:
+            regime = "neutral — using defaults"
+
+        return {
+            "mode": mode,
+            "sl_mult": sl_mult,
+            "tp_mult": tp_mult,
+            "win_rate": win_rate,
+            "wins": wins,
+            "total_trades_sampled": total,
+            "window": window,
+            "regime": regime,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass

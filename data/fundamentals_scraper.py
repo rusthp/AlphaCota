@@ -205,9 +205,6 @@ def _enrich_with_history(result: dict, ticker: str) -> dict:
         df = pd.read_csv(csv_path, parse_dates=["date"])
 
         if df.empty or "dividend" not in df.columns or "date" not in df.columns:
-            result["dividend_consistency"] = None
-            result["revenue_growth_12m"] = 0.0
-            result["earnings_growth_12m"] = 0.0
             return result
 
         df = df.sort_values("date").reset_index(drop=True)
@@ -252,14 +249,8 @@ def _enrich_with_history(result: dict, ticker: str) -> dict:
 
     except FileNotFoundError:
         logger.debug(f"Histórico de dividendos não encontrado para {ticker}")
-        result["dividend_consistency"] = None
-        result["revenue_growth_12m"] = 0.0
-        result["earnings_growth_12m"] = 0.0
     except Exception as e:
         logger.warning(f"Erro ao enriquecer histórico de {ticker}: {e}")
-        result["dividend_consistency"] = None
-        result["revenue_growth_12m"] = 0.0
-        result["earnings_growth_12m"] = 0.0
 
     return result
 

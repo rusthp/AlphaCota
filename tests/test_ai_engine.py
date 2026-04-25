@@ -10,21 +10,36 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import core.ai_engine as ai
 
 
+def _no_cache(*args, **kwargs):
+    """Patch helper — makes get_cached_sentiment always return None."""
+    return None
+
+
 class TestAnalyzeFiiNews:
     def test_missing_api_key_returns_error(self):
-        with patch.dict("os.environ", {}, clear=True), patch.object(ai, "HAS_GROQ", True):
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch.object(ai, "HAS_GROQ", True),
+            patch.object(ai, "get_cached_sentiment", _no_cache),
+        ):
             result = ai.analyze_fii_news("HGLG11", [{"titulo": "test", "data": "today"}])
             assert result["success"] is False
             assert "GROQ_API_KEY" in result["error"]
 
     def test_groq_not_installed_returns_error(self):
-        with patch.object(ai, "HAS_GROQ", False):
+        with (
+            patch.object(ai, "HAS_GROQ", False),
+            patch.object(ai, "get_cached_sentiment", _no_cache),
+        ):
             result = ai.analyze_fii_news("HGLG11", [{"titulo": "test"}], api_key="fake-key")
             assert result["success"] is False
             assert "groq" in result["error"].lower()
 
     def test_empty_news_returns_error(self):
-        with patch.object(ai, "HAS_GROQ", True):
+        with (
+            patch.object(ai, "HAS_GROQ", True),
+            patch.object(ai, "get_cached_sentiment", _no_cache),
+        ):
             result = ai.analyze_fii_news("HGLG11", [], api_key="fake-key")
             assert result["success"] is False
             assert "noticia" in result["error"].lower()
@@ -36,7 +51,11 @@ class TestAnalyzeFiiNews:
         mock_completion.choices[0].message.content = "POSITIVO\nResumo: Fundo em alta."
         mock_client.return_value.chat.completions.create.return_value = mock_completion
 
-        with patch.object(ai, "HAS_GROQ", True), patch.object(ai, "Groq", mock_client):
+        with (
+            patch.object(ai, "HAS_GROQ", True),
+            patch.object(ai, "Groq", mock_client),
+            patch.object(ai, "get_cached_sentiment", _no_cache),
+        ):
             news = [
                 {"titulo": "HGLG11 aumenta dividendos", "data": "2025-03-01"},
                 {"titulo": "Setor logistico em expansao", "data": "2025-03-02"},
@@ -51,7 +70,11 @@ class TestAnalyzeFiiNews:
         mock_client = MagicMock()
         mock_client.return_value.chat.completions.create.side_effect = Exception("Rate limit")
 
-        with patch.object(ai, "HAS_GROQ", True), patch.object(ai, "Groq", mock_client):
+        with (
+            patch.object(ai, "HAS_GROQ", True),
+            patch.object(ai, "Groq", mock_client),
+            patch.object(ai, "get_cached_sentiment", _no_cache),
+        ):
             news = [{"titulo": "test", "data": "today"}]
             result = ai.analyze_fii_news("HGLG11", news, api_key="test-key")
             assert result["success"] is False
@@ -80,7 +103,11 @@ class TestAnalyzeFiiNews:
         mock_completion.choices[0].message.content = "NEUTRO"
         mock_client.return_value.chat.completions.create.return_value = mock_completion
 
-        with patch.object(ai, "HAS_GROQ", True), patch.object(ai, "Groq", mock_client):
+        with (
+            patch.object(ai, "HAS_GROQ", True),
+            patch.object(ai, "Groq", mock_client),
+            patch.object(ai, "get_cached_sentiment", _no_cache),
+        ):
             result = ai.analyze_fii_news("HGLG11", [{"titulo": "sem data aqui"}], api_key="key")
             assert result["success"] is True
             assert result["news_count"] == 1
@@ -124,6 +151,7 @@ class TestGetVectorizerContext:
             patch.object(ai, "HAS_GROQ", True),
             patch.object(ai, "Groq", mock_client),
             patch.object(ai, "_vectorizer", mock_vec),
+            patch.object(ai, "get_cached_sentiment", _no_cache),
         ):
             result = ai.analyze_fii_news(
                 "MXRF11", [{"titulo": "Dividendo alto", "data": "2025-01"}], api_key="key"
@@ -131,6 +159,7 @@ class TestGetVectorizerContext:
             assert result["success"] is True
             # Verify the prompt passed to Groq contains the RAG context
             call_args = mock_client.return_value.chat.completions.create.call_args
+            assert call_args is not None, "Groq was not called — cache may have intercepted"
             messages = call_args.kwargs["messages"]
             user_msg = messages[1]["content"]
             assert "extra rag context" in user_msg
