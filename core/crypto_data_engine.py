@@ -164,6 +164,11 @@ def get_top_pairs(
 
     quote_upper = quote.upper()
     _blacklist_suffixes = ("UPUSDT", "DOWNUSDT", "BULLUSDT", "BEARUSDT")
+    # Stablecoin base assets — always ranging, never generate tradeable signals.
+    _stablecoin_bases = frozenset(
+        ("USDC", "FDUSD", "BUSD", "TUSD", "USDP", "USDD", "DAI", "FRAX",
+         "USDE", "USDX", "PYUSD", "GUSD", "SUSD", "CRVUSD", "ALUSD")
+    )
 
     candidates: list[tuple[str, float]] = []
     for item in raw:
@@ -173,6 +178,9 @@ def get_top_pairs(
         if not sym.endswith(quote_upper):
             continue
         if any(sym.endswith(sfx) for sfx in _blacklist_suffixes):
+            continue
+        base = sym[: -len(quote_upper)]
+        if base in _stablecoin_bases:
             continue
         try:
             vol = float(item.get("quoteVolume", 0.0))

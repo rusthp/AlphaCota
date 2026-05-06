@@ -394,3 +394,63 @@ class TestCryptoLoopConstants:
             assert _loop._ML_MIN_CONFIDENCE == 0.70
         finally:
             os.environ.pop("CRYPTO_ML_MIN_CONFIDENCE", None)
+
+
+# ---------------------------------------------------------------------------
+# 7. get_top_pairs — stablecoin filter
+# ---------------------------------------------------------------------------
+
+class TestGetTopPairs:
+    def _mock_ticker(self, symbols: list[tuple[str, float]]) -> list[dict]:
+        return [{"symbol": sym, "quoteVolume": str(vol)} for sym, vol in symbols]
+
+    def test_stablecoins_excluded(self):
+        """USDCUSDT, FDUSDUSDT, BUSDUSDT must be filtered out."""
+        from unittest.mock import patch
+        from core.crypto_data_engine import get_top_pairs
+
+        tickers = self._mock_ticker([
+            ("USDCUSDT", 9_000_000_000.0),  # stablecoin — must be dropped
+            ("FDUSDUSDT", 8_000_000_000.0), # stablecoin — must be dropped
+            ("BTCUSDT",   5_000_000_000.0),
+            ("ETHUSDT",   3_000_000_000.0),
+        ])
+        with patch("core.crypto_data_engine._get_json", return_value=tickers):
+            result = get_top_pairs(quote="USDT", min_volume_usd=1_000.0)
+
+        assert "USDCUSDT" not in result
+        assert "FDUSDUSDT" not in result
+        assert "BTCUSDT" in result
+        assert "ETHUSDT" in result
+
+    def test_leveraged_tokens_excluded(self):
+        """BTCDOWNUSDT / BTCUPUSDT must still be filtered by suffix blacklist."""
+        from unittest.mock import patch
+        from core.crypto_data_engine import get_top_pairs
+
+        tickers = self._mock_ticker([
+            ("BTCDOWNUSDT", 2_000_000_000.0),
+            ("BTCUPUSDT",   1_500_000_000.0),
+            ("BTCUSDT",     5_000_000_000.0),
+        ])
+        with patch("core.crypto_data_engine._get_json", return_value=tickers):
+            result = get_top_pairs(quote="USDT", min_volume_usd=1_000.0)
+
+        assert "BTCDOWNUSDT" not in result
+        assert "BTCUPUSDT" not in result
+        assert "BTCUSDT" in result
+
+    def test_volume_filter_respected(self):
+        """Pairs below min_volume_usd must not appear."""
+        from unittest.mock import patch
+        from core.crypto_data_engine import get_top_pairs
+
+        tickers = self._mock_ticker([
+            ("BTCUSDT", 5_000_000.0),
+            ("ETHUSDT",    50_000.0),  # below threshold
+        ])
+        with patch("core.crypto_data_engine._get_json", return_value=tickers):
+            result = get_top_pairs(quote="USDT", min_volume_usd=1_000_000.0)
+
+        assert "BTCUSDT" in result
+        assert "ETHUSDT" not in result
