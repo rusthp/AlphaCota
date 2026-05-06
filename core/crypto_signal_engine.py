@@ -72,7 +72,7 @@ _MIN_SIGNAL_CONFIDENCE = 0.65
 
 # ADX thresholds for regime classification.
 _ADX_TRENDING = 25.0    # above → trending
-_ADX_RANGING  = 15.0    # below → ranging (no trade); was 20 — too aggressive in low-vol periods
+_ADX_RANGING  = 12.0    # below → ranging (no trade); was 15 — lowered to allow entry in moderate ranging
 
 # On-chain override: if |onchain_agg| exceeds this threshold the ranging
 # block is bypassed.  Confidence threshold is raised to _ONCHAIN_RANGING_THRESHOLD
