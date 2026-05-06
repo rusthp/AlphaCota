@@ -269,9 +269,9 @@ function SymbolRow({ s }: { s: SymbolDecomp }) {
     );
   }
 
-  const t = s.tech!;
-  const oc = s.onchain!;
-  const ml = s.ml!;
+  const t = s.tech ?? { direction: "flat" as const, confidence: 0, signed: 0, weight_contribution: 0 };
+  const oc = s.onchain ?? { available: false };
+  const ml = s.ml ?? { available: false, direction: "flat" as const, confidence: 0, prob_long: 0, prob_flat: 1, prob_short: 0 };
   const combined = s.combined ?? 0;
 
   return (

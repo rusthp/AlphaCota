@@ -716,14 +716,21 @@ def decompose_signal(
     """
     entry_price = candles[-1].close if candles else 0.0
 
+    _flat_tech = {"direction": "flat", "confidence": 0.0, "signed": 0.0, "weight_contribution": 0.0}
+    _flat_ml = {"available": False, "direction": "flat", "confidence": 0.0, "prob_long": 0.0, "prob_flat": 1.0, "prob_short": 0.0}
+    _flat_vwap = {"value": 0.0, "price_vs_vwap": 0.0, "above": False}
+    _flat_vol = {"detected": False, "direction": "none"}
+
     if len(candles) < 50 or entry_price <= 0.0:
         return {
             "symbol": symbol, "price": entry_price, "regime": "unknown",
-            "adx": 0.0, "tech": {"direction": "flat", "confidence": 0.0, "signed": 0.0},
-            "onchain": onchain_detail or {}, "news_score": 0.0,
+            "adx": 0.0, "tech": _flat_tech, "ml": _flat_ml,
+            "onchain": onchain_detail or {"available": False}, "news_score": 0.0,
+            "news_weight_contribution": 0.0,
             "combined": 0.0, "threshold": _LONG_THRESHOLD,
             "htf_trend": "neutral", "decision": "flat",
             "would_enter": False, "skip_reason": "insufficient_data",
+            "vwap": _flat_vwap, "volume_spike": _flat_vol,
         }
 
     adx = calculate_adx(candles, 14)
@@ -736,12 +743,14 @@ def decompose_signal(
     if regime == "ranging" and not onchain_override_active:
         return {
             "symbol": symbol, "price": round(entry_price, 8), "regime": regime,
-            "adx": round(adx, 2),
-            "tech": {"direction": "flat", "confidence": 0.0, "signed": 0.0},
-            "onchain": onchain_detail or {}, "news_score": round(float(news_score), 4),
+            "adx": round(adx, 2), "tech": _flat_tech, "ml": _flat_ml,
+            "onchain": onchain_detail or {"available": False},
+            "news_score": round(float(news_score), 4),
+            "news_weight_contribution": round(_WEIGHT_NEWS * max(-1.0, min(1.0, float(news_score))), 4),
             "combined": 0.0, "threshold": _LONG_THRESHOLD,
             "htf_trend": "neutral", "decision": "flat",
             "would_enter": False, "skip_reason": "ranging_market",
+            "vwap": _flat_vwap, "volume_spike": _flat_vol,
         }
 
     tech_dir, tech_conf = compute_technical_signal(candles, order_book_imbalance, regime)
