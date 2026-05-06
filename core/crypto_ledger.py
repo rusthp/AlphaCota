@@ -413,7 +413,10 @@ def get_symbol_win_rate(
         return None
 
     total = int(row["total"]) if row and row["total"] else 0
-    if total < window:
+    # Require at least half the window (min 3) so we don't wait for 10 trades
+    # before blocking a symbol with a clear run of losses.
+    min_required = max(3, window // 2)
+    if total < min_required:
         return None
 
     wins = int(row["wins"]) if row and row["wins"] else 0
