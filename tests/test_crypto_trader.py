@@ -528,11 +528,12 @@ class TestSymbolWinRate:
         conn.commit()
 
     def test_returns_none_when_insufficient_trades(self):
-        """Returns None when fewer than window trades exist."""
+        """Returns None when fewer than max(3, window//2) trades exist."""
         from core.crypto_ledger import get_symbol_win_rate
 
         conn = sqlite3.connect(":memory:")
-        self._make_symbol_trades(conn, "BTCUSDT", wins=3, total=5)
+        # window=10 → min_required=5; only 2 trades → None
+        self._make_symbol_trades(conn, "BTCUSDT", wins=1, total=2)
         result = get_symbol_win_rate(conn, "BTCUSDT", "paper", window=10)
         assert result is None
 
@@ -903,10 +904,10 @@ class TestRangingOverride:
             ))
         return candles
 
-    def test_adx_threshold_is_15(self):
-        """_ADX_RANGING constant must be 15 (was 20)."""
+    def test_adx_threshold_is_12(self):
+        """_ADX_RANGING constant must be 12 (lowered from 15 to reduce ranging blocks)."""
         from core.crypto_signal_engine import _ADX_RANGING
-        assert _ADX_RANGING == 15.0
+        assert _ADX_RANGING == 12.0
 
     def test_ranging_blocked_without_onchain(self):
         """Flat candles (ADX < 15) with onchain=0.0 → flat signal."""
