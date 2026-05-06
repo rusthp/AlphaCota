@@ -2531,6 +2531,129 @@ def crypto_ml_train(req: _MLTrainRequest | None = Body(default=None)):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.get("/api/crypto/signal/decomposition")
+def crypto_signal_decomposition_endpoint(interval: str = "15m"):
+    """Full signal decomposition for the Confiança IA dashboard tab.
+
+    For each symbol returns: regime, ADX, tech score, on-chain breakdown,
+    news score, combined signal, ML confidence, F&G context, and the final
+    entry decision with the reason it was taken or skipped.
+    """
+    import pandas as pd
+    import time as _time
+
+    from core.crypto_data_engine import fetch_candles, fetch_order_book_imbalance
+    from core.crypto_signal_engine import decompose_signal
+    from core.crypto_news_engine import fetch_news, score_news_sentiment
+    from core.crypto_onchain_engine import fetch_onchain_signals
+    from core.crypto_market_context_engine import fetch_market_context
+    from core.crypto_ml_model import get_confidence
+
+    news_items = fetch_news(limit=20)
+    market_ctx = fetch_market_context(news_items, known_symbols=set(_CRYPTO_PAIRS))
+
+    fg = {
+        "value": market_ctx.fg_value,
+        "label": market_ctx.fg_label,
+        "score": market_ctx.fg_score,
+        "size_multiplier": market_ctx.size_multiplier,
+    }
+
+    results = []
+    for symbol in _CRYPTO_PAIRS:
+        try:
+            candles = fetch_candles(symbol, interval, 100)
+            if not candles:
+                results.append({"symbol": symbol, "error": "no_candles"})
+                continue
+
+            htf_candles = None
+            try:
+                htf_candles = fetch_candles(symbol, "4h", 210)
+            except Exception:
+                pass
+
+            obi = 0.0
+            try:
+                obi = fetch_order_book_imbalance(symbol)
+            except Exception:
+                pass
+
+            news_score = score_news_sentiment(news_items, symbol)
+
+            onchain_detail: dict = {}
+            onchain_agg = 0.0
+            try:
+                sig = fetch_onchain_signals(symbol)
+                if sig.available:
+                    onchain_agg = sig.aggregate
+                    onchain_detail = {
+                        "available": True,
+                        "aggregate": round(sig.aggregate, 4),
+                        "funding_score": round(sig.funding_score, 4),
+                        "oi_score": round(sig.oi_score, 4),
+                        "ls_score": round(sig.ls_score, 4),
+                        "weight_contribution": round(0.15 * sig.aggregate, 4),
+                    }
+                else:
+                    onchain_detail = {"available": False}
+            except Exception:
+                onchain_detail = {"available": False}
+
+            decomp = decompose_signal(
+                symbol, candles, news_score, obi,
+                htf_candles=htf_candles,
+                onchain_score=onchain_agg,
+                onchain_detail=onchain_detail,
+            )
+
+            # ML gate check
+            ml = {"direction": "flat", "confidence": 0.0,
+                  "prob_long": 0.0, "prob_flat": 1.0, "prob_short": 0.0,
+                  "available": False}
+            try:
+                candles_df = pd.DataFrame([
+                    {"open": c.open, "high": c.high, "low": c.low,
+                     "close": c.close, "volume": c.volume, "symbol": c.symbol,
+                     "open_time": int(c.timestamp * 1000)}
+                    for c in candles
+                ])
+                ms = get_confidence(symbol, interval, df=candles_df)
+                ml = {
+                    "direction": ms.direction,
+                    "confidence": ms.confidence,
+                    "prob_long": ms.prob_long,
+                    "prob_flat": ms.prob_flat,
+                    "prob_short": ms.prob_short,
+                    "available": True,
+                }
+            except Exception:
+                pass
+
+            # Would the live loop actually enter?
+            would_enter = (
+                decomp["would_enter"]
+                and (not ml["available"] or (
+                    ml["direction"] == decomp["decision"]
+                    and ml["confidence"] >= 0.55
+                ))
+            )
+            if decomp["would_enter"] and ml["available"] and ml["direction"] != decomp["decision"]:
+                decomp["skip_reason"] = "ml_disagrees"
+                would_enter = False
+
+            decomp["ml"] = ml
+            decomp["would_enter"] = would_enter
+            decomp["fear_greed"] = fg
+
+            results.append(decomp)
+        except Exception as exc:
+            results.append({"symbol": symbol, "error": str(exc), "would_enter": False})
+
+    results.sort(key=lambda r: (0 if r.get("would_enter") else 1, -abs(r.get("combined", 0.0))))
+    return {"interval": interval, "fear_greed": fg, "symbols": results, "timestamp": _time.time()}
+
+
 @app.get("/api/crypto/ml/confidence")
 def crypto_ml_confidence_all(interval: str = "15m"):
     """Return ML model confidence scores for all 12 pairs.

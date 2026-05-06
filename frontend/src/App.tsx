@@ -24,6 +24,7 @@ import ComparePage from "./pages/ComparePage";
 import WatchlistPage from "./pages/WatchlistPage";
 import PolymarketPage from "./pages/PolymarketPage";
 import TerminalPage from "./pages/TerminalPage";
+import CryptoConfidencePage from "./pages/CryptoConfidencePage";
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state = { error: null };
@@ -35,7 +36,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
           <div className="text-center space-y-3">
             <p className="text-destructive font-semibold text-lg">Erro inesperado</p>
             <p className="text-muted-foreground text-sm font-mono">{(this.state.error as Error).message}</p>
-            <button className="text-xs underline text-muted-foreground" onClick={() => this.setState({ error: null })}>
+            <button type="button" className="text-xs underline text-muted-foreground" onClick={() => this.setState({ error: null })}>
               Tentar novamente
             </button>
           </div>
@@ -75,6 +76,7 @@ const App = () => (
             <Route path="watchlist" element={<WatchlistPage />} />
             <Route path="polymarket" element={<PolymarketPage />} />
             <Route path="terminal" element={<TerminalPage />} />
+            <Route path="crypto-confidence" element={<CryptoConfidencePage />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>

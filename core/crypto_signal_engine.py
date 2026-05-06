@@ -54,23 +54,31 @@ _REGIME_WEIGHTS: dict[str, tuple[float, float, float, float]] = {
     "volatile":  (0.30, 0.30, 0.25, 0.15),  # balanced — extra caution
 }
 
-# Weights for final (TA vs news) combination.
-# News at 0.20 means it cannot push a below-threshold technical signal over the entry
-# bar on its own (max news contribution = 0.20 × 1.0 = 0.20, threshold gap = 0.03).
-# EMA + MACD agreement (composite = 0.80) is sufficient to clear 0.63 without news.
-_WEIGHT_TECHNICAL = 0.80
-_WEIGHT_NEWS = 0.20
+# Weights for final combination.
+# Technical (0.75): EMA+MACD agreement (composite=0.80) → combined=0.60; needs on-chain
+#                   or news confirmation to clear 0.63, preventing noise entries.
+# On-chain (0.15): funding rate, OI change, L/S ratio — structural market state.
+# News (0.10):     sentiment boost/drag; intentionally lowest weight (most noisy).
+_WEIGHT_TECHNICAL = 0.75
+_WEIGHT_ONCHAIN   = 0.15
+_WEIGHT_NEWS      = 0.10
 
 # Thresholds.
-# 0.63 requires EMA + MACD both aligned (composite ≥ 0.80 in trending regime).
-# A single indicator alone (composite ≤ 0.45) can never cross the bar alone.
+# 0.63: EMA+MACD alone give 0.75×0.80=0.60; on-chain confirmation (score≥0.20)
+#       or strongly bullish news (score≥0.30) tips it over. Single indicator never clears.
 _LONG_THRESHOLD = 0.63
 _SHORT_THRESHOLD = -0.63
 _MIN_SIGNAL_CONFIDENCE = 0.65
 
 # ADX thresholds for regime classification.
 _ADX_TRENDING = 25.0    # above → trending
-_ADX_RANGING  = 20.0    # below → ranging (no trade)
+_ADX_RANGING  = 15.0    # below → ranging (no trade); was 20 — too aggressive in low-vol periods
+
+# On-chain override: if |onchain_agg| exceeds this threshold the ranging
+# block is bypassed.  Confidence threshold is raised to _ONCHAIN_RANGING_THRESHOLD
+# to compensate for the weaker directional regime.
+_ONCHAIN_RANGING_OVERRIDE = 0.45
+_ONCHAIN_RANGING_THRESHOLD = 0.70
 
 # Risk sizing constants.
 _ATR_PERIOD = 14
@@ -470,25 +478,27 @@ def generate_signal(
     sl_mult: float | None = None,
     tp_mult: float | None = None,
     htf_candles: list[CryptoCandle] | None = None,
+    onchain_score: float = 0.0,
 ) -> CryptoSignal:
-    """Produce a CryptoSignal combining technicals and news sentiment.
+    """Produce a CryptoSignal combining technicals, on-chain signals, and news.
 
     Pipeline:
         1. compute_technical_signal -> (tech_dir, tech_conf)
-        2. Convert both sides to signed magnitudes in [-1, 1].
-        3. combined = 0.7 * tech_signed + 0.3 * clamped_news_score
-        4. Direction = long if combined >  0.6
-                       short if combined < -0.6
+        2. Convert to signed magnitude in [-1, 1].
+        3. combined = 0.75 * tech_signed + 0.15 * onchain_score + 0.10 * news_score
+        4. Direction = long  if combined >  0.63
+                       short if combined < -0.63
                        flat  otherwise
-        5. ATR(14) drives SL/TP: SL = entry - 1.5*ATR (long) or +1.5*ATR (short);
-                                 TP = entry + 3.0*ATR (long) or -3.0*ATR (short).
-        6. Only emit non-flat signals with confidence >= 0.65; otherwise flat.
+        5. Multi-timeframe filter: suppress signals contradicting 4H HTF trend.
+        6. ATR(14) drives SL/TP levels.
+        7. Only emit non-flat signals with confidence >= 0.65; otherwise flat.
 
     Args:
         symbol: Exchange symbol (e.g. "BTCUSDT").
         candles: Ordered oldest → newest, length >= 50 ideal.
         news_score: Aggregate news sentiment in [-1, 1].
         order_book_imbalance: Book imbalance in [-1, 1].
+        onchain_score: Weighted on-chain composite (funding + OI + L/S) in [-1, 1].
 
     Returns:
         CryptoSignal — flat when data is thin or confidence is below threshold.
@@ -508,9 +518,15 @@ def generate_signal(
             timestamp=now,
         )
 
-    # Regime detection — ranging markets skip new entries entirely.
+    # Regime detection — ranging markets skip new entries unless on-chain
+    # data provides strong directional conviction (|onchain_agg| > 0.45).
+    # In that case the entry threshold is raised to 0.70 to compensate.
     regime = detect_market_regime(candles)
-    if regime == "ranging":
+    onchain_override_active = (
+        regime == "ranging"
+        and abs(onchain_score) >= _ONCHAIN_RANGING_OVERRIDE
+    )
+    if regime == "ranging" and not onchain_override_active:
         return CryptoSignal(
             symbol=symbol,
             direction="flat",
@@ -530,13 +546,21 @@ def generate_signal(
         tech_signed = -tech_conf
 
     clamped_news = max(-1.0, min(1.0, float(news_score)))
-    combined = _WEIGHT_TECHNICAL * tech_signed + _WEIGHT_NEWS * clamped_news
+    clamped_onchain = max(-1.0, min(1.0, float(onchain_score)))
+    combined = (
+        _WEIGHT_TECHNICAL * tech_signed
+        + _WEIGHT_ONCHAIN * clamped_onchain
+        + _WEIGHT_NEWS * clamped_news
+    )
     combined = max(-1.0, min(1.0, combined))
     confidence = round(abs(combined), 4)
 
-    if combined > _LONG_THRESHOLD:
+    long_thresh  = _ONCHAIN_RANGING_THRESHOLD if onchain_override_active else _LONG_THRESHOLD
+    short_thresh = -_ONCHAIN_RANGING_THRESHOLD if onchain_override_active else _SHORT_THRESHOLD
+
+    if combined > long_thresh:
         direction = "long"
-    elif combined < _SHORT_THRESHOLD:
+    elif combined < short_thresh:
         direction = "short"
     else:
         direction = "flat"
@@ -616,3 +640,109 @@ def generate_signal(
         take_profit=round(take_profit, 8),
         timestamp=now,
     )
+
+
+def decompose_signal(
+    symbol: str,
+    candles: list[CryptoCandle],
+    news_score: float = 0.0,
+    order_book_imbalance: float = 0.0,
+    htf_candles: list[CryptoCandle] | None = None,
+    onchain_score: float = 0.0,
+    onchain_detail: dict | None = None,
+) -> dict:
+    """Return full signal decomposition without emitting a CryptoSignal.
+
+    Used by the /api/crypto/signal/decomposition endpoint to populate the
+    Confiança IA dashboard tab.  Mirrors generate_signal internals exactly
+    so every number shown in the UI matches what the live loop uses.
+
+    Returns:
+        dict with keys: symbol, price, regime, adx, tech, onchain, news_score,
+        combined, threshold, htf_trend, decision, would_enter, skip_reason.
+    """
+    entry_price = candles[-1].close if candles else 0.0
+
+    if len(candles) < 50 or entry_price <= 0.0:
+        return {
+            "symbol": symbol, "price": entry_price, "regime": "unknown",
+            "adx": 0.0, "tech": {"direction": "flat", "confidence": 0.0, "signed": 0.0},
+            "onchain": onchain_detail or {}, "news_score": 0.0,
+            "combined": 0.0, "threshold": _LONG_THRESHOLD,
+            "htf_trend": "neutral", "decision": "flat",
+            "would_enter": False, "skip_reason": "insufficient_data",
+        }
+
+    adx = calculate_adx(candles, 14)
+    regime = detect_market_regime(candles)
+    onchain_override_active = (
+        regime == "ranging"
+        and abs(onchain_score) >= _ONCHAIN_RANGING_OVERRIDE
+    )
+
+    if regime == "ranging" and not onchain_override_active:
+        return {
+            "symbol": symbol, "price": round(entry_price, 8), "regime": regime,
+            "adx": round(adx, 2),
+            "tech": {"direction": "flat", "confidence": 0.0, "signed": 0.0},
+            "onchain": onchain_detail or {}, "news_score": round(float(news_score), 4),
+            "combined": 0.0, "threshold": _LONG_THRESHOLD,
+            "htf_trend": "neutral", "decision": "flat",
+            "would_enter": False, "skip_reason": "ranging_market",
+        }
+
+    tech_dir, tech_conf = compute_technical_signal(candles, order_book_imbalance, regime)
+    tech_signed = tech_conf if tech_dir == "long" else (-tech_conf if tech_dir == "short" else 0.0)
+
+    clamped_news = max(-1.0, min(1.0, float(news_score)))
+    clamped_onchain = max(-1.0, min(1.0, float(onchain_score)))
+    combined = (
+        _WEIGHT_TECHNICAL * tech_signed
+        + _WEIGHT_ONCHAIN * clamped_onchain
+        + _WEIGHT_NEWS * clamped_news
+    )
+    combined = max(-1.0, min(1.0, combined))
+
+    threshold = _ONCHAIN_RANGING_THRESHOLD if onchain_override_active else _LONG_THRESHOLD
+
+    if combined > threshold:
+        decision = "long"
+    elif combined < -threshold:
+        decision = "short"
+    else:
+        decision = "flat"
+
+    htf_trend = "neutral"
+    if htf_candles:
+        htf_trend = compute_htf_trend(htf_candles)
+        if htf_trend == "bullish" and decision == "short":
+            decision = "flat"
+        elif htf_trend == "bearish" and decision == "long":
+            decision = "flat"
+
+    skip_reason = None if decision != "flat" else "below_threshold"
+
+    return {
+        "symbol": symbol,
+        "price": round(entry_price, 8),
+        "regime": regime,
+        "adx": round(adx, 2),
+        "tech": {
+            "direction": tech_dir,
+            "confidence": round(tech_conf, 4),
+            "signed": round(tech_signed, 4),
+            "weight_contribution": round(_WEIGHT_TECHNICAL * tech_signed, 4),
+        },
+        "onchain": onchain_detail or {
+            "aggregate": round(clamped_onchain, 4),
+            "weight_contribution": round(_WEIGHT_ONCHAIN * clamped_onchain, 4),
+        },
+        "news_score": round(clamped_news, 4),
+        "news_weight_contribution": round(_WEIGHT_NEWS * clamped_news, 4),
+        "combined": round(combined, 4),
+        "threshold": threshold,
+        "htf_trend": htf_trend,
+        "decision": decision,
+        "would_enter": decision != "flat",
+        "skip_reason": skip_reason,
+    }

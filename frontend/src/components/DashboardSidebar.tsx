@@ -1,4 +1,4 @@
-import { Radar, LineChart, Briefcase, Sparkles, ArrowLeft, Globe, TrendingUp, Shield, GitBranch, Layers, CalendarDays, BarChart3, Bookmark, Zap, TerminalSquare, LogOut } from "lucide-react";
+import { Radar, LineChart, Briefcase, Sparkles, ArrowLeft, Globe, TrendingUp, Shield, GitBranch, Layers, CalendarDays, BarChart3, Bookmark, Zap, TerminalSquare, LogOut, Brain } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation, Link } from "react-router-dom";
 import { logout } from "@/lib/auth";
@@ -29,6 +29,7 @@ const items = [
   { title: "Watchlist", url: "/dashboard/watchlist", icon: Bookmark },
   { title: "Polymarket", url: "/dashboard/polymarket", icon: Zap },
   { title: "Terminal", url: "/dashboard/terminal", icon: TerminalSquare },
+  { title: "Confiança IA", url: "/dashboard/crypto-confidence", icon: Brain },
 ];
 
 export function DashboardSidebar() {
