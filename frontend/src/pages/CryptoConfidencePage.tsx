@@ -119,12 +119,36 @@ function DirectionBadge({ dir }: { dir: "long" | "short" | "flat" }) {
   );
 }
 
+const REGIME_PT: Record<string, string> = {
+  trending: "Tendência",
+  ranging: "Lateral",
+  volatile: "Volátil",
+  unknown: "Desconhecido",
+};
+
 function RegimeBadge({ regime }: { regime?: string }) {
   const cls =
     regime === "trending" ? "bg-blue-600 text-white" :
     regime === "volatile" ? "bg-yellow-600 text-white" :
     "bg-slate-600 text-white";
-  return <Badge className={`text-xs ${cls}`}>{regime ?? "—"}</Badge>;
+  return <Badge className={`text-xs ${cls}`}>{regime ? (REGIME_PT[regime] ?? regime) : "—"}</Badge>;
+}
+
+const SKIP_REASON_PT: Record<string, string> = {
+  ranging_market_adx_too_low: "mercado lateral (ADX baixo)",
+  below_threshold: "abaixo do limiar",
+  above_threshold_wrong_direction: "limiar cruzado, direção errada",
+  ml_gate_failed: "ML bloqueou",
+  ml_direction_mismatch: "ML diverge da direção",
+  htf_trend_conflict: "conflito com tendência HTF",
+  win_rate_too_low: "taxa de acerto baixa",
+  no_signal: "sem sinal",
+  insufficient_data: "dados insuficientes",
+  volatile_market: "mercado volátil",
+};
+
+function translateSkipReason(reason: string): string {
+  return SKIP_REASON_PT[reason] ?? reason.replace(/_/g, " ");
 }
 
 function ScoreBar({
@@ -206,11 +230,11 @@ function FearGreedWidget({ fg }: { fg: FearGreed }) {
           <div className={`text-xs ${color}`}>{fg.label}</div>
         </div>
         <div className="border-l border-slate-600 pl-4">
-          <div className="text-xs text-slate-400 mb-0.5">Size mult.</div>
+          <div className="text-xs text-slate-400 mb-0.5">Mult. tamanho</div>
           <div className="text-base font-semibold text-white">×{fg.size_multiplier.toFixed(2)}</div>
         </div>
         <div className="border-l border-slate-600 pl-4">
-          <div className="text-xs text-slate-400 mb-0.5">Contrarian score</div>
+          <div className="text-xs text-slate-400 mb-0.5">Score contrarian</div>
           <div className="text-base font-semibold text-white">{fg.score > 0 ? "+" : ""}{fg.score.toFixed(1)}</div>
         </div>
       </CardContent>
@@ -263,7 +287,7 @@ function SymbolRow({ s }: { s: SymbolDecomp }) {
         <td className="py-2.5 px-3">
           <DirectionBadge dir={t.direction} />
           <div className="text-xs text-slate-400 mt-0.5">
-            conf {pct(t.confidence)} · w {t.weight_contribution > 0 ? "+" : ""}{fmt2(t.weight_contribution)}
+            conf {pct(t.confidence)} · peso {t.weight_contribution > 0 ? "+" : ""}{fmt2(t.weight_contribution)}
           </div>
         </td>
 
@@ -296,7 +320,7 @@ function SymbolRow({ s }: { s: SymbolDecomp }) {
             <span className={combined >= 0 ? "text-emerald-400" : "text-red-400"}>
               {combined >= 0 ? "+" : ""}{combined.toFixed(3)}
             </span>
-            <span className="text-slate-500">thr ±{s.threshold?.toFixed(2)}</span>
+            <span className="text-slate-500">lim ±{s.threshold?.toFixed(2)}</span>
           </div>
           <ScoreBar value={combined} threshold={s.threshold} />
         </td>
@@ -319,7 +343,9 @@ function SymbolRow({ s }: { s: SymbolDecomp }) {
           <span className={`text-xs font-medium ${
             s.htf_trend === "bullish" ? "text-emerald-400" :
             s.htf_trend === "bearish" ? "text-red-400" : "text-slate-400"
-          }`}>{s.htf_trend}</span>
+          }`}>
+          {s.htf_trend === "bullish" ? "Alta" : s.htf_trend === "bearish" ? "Baixa" : s.htf_trend === "neutral" ? "Neutro" : "—"}
+        </span>
         </td>
 
         {/* Decision */}
@@ -336,7 +362,7 @@ function SymbolRow({ s }: { s: SymbolDecomp }) {
                 <span className="text-xs">PASSAR</span>
               </div>
               {s.skip_reason && (
-                <span className="text-xs text-slate-500 mt-0.5">{s.skip_reason}</span>
+                <span className="text-xs text-slate-500 mt-0.5">{translateSkipReason(s.skip_reason)}</span>
               )}
             </div>
           )}
@@ -366,7 +392,7 @@ function SymbolRow({ s }: { s: SymbolDecomp }) {
                 </div>
                 {oc.available ? (
                   <div className="space-y-0.5 text-slate-300">
-                    <div>Aggregate: {oc.aggregate! >= 0 ? "+" : ""}{oc.aggregate?.toFixed(4)}</div>
+                    <div>Agregado: {oc.aggregate! >= 0 ? "+" : ""}{oc.aggregate?.toFixed(4)}</div>
                     <div>Funding: {oc.funding_score?.toFixed(4)}</div>
                     <div>OI: {oc.oi_score?.toFixed(4)}</div>
                     <div>L/S: {oc.ls_score?.toFixed(4)}</div>
@@ -380,7 +406,7 @@ function SymbolRow({ s }: { s: SymbolDecomp }) {
                   <Newspaper className="h-3 w-3" /> Notícias (10%)
                 </div>
                 <div className="space-y-0.5 text-slate-300">
-                  <div>Score: {(s.news_score ?? 0) >= 0 ? "+" : ""}{s.news_score?.toFixed(4)}</div>
+                  <div>Pontuação: {(s.news_score ?? 0) >= 0 ? "+" : ""}{s.news_score?.toFixed(4)}</div>
                   <div>Contribuição: {(s.news_weight_contribution ?? 0) >= 0 ? "+" : ""}{(s.news_weight_contribution ?? 0).toFixed(4)}</div>
                 </div>
               </div>
@@ -403,8 +429,8 @@ function SymbolRow({ s }: { s: SymbolDecomp }) {
 
             <div className="mt-3 pt-2 border-t border-slate-700 text-xs text-slate-400">
               <span className="font-medium">Fórmula:</span>{" "}
-              combined = 0.75 × {t.signed >= 0 ? "+" : ""}{t.signed.toFixed(3)} + 0.15 × {(oc.aggregate ?? 0) >= 0 ? "+" : ""}{(oc.aggregate ?? 0).toFixed(3)} + 0.10 × {(s.news_score ?? 0) >= 0 ? "+" : ""}{(s.news_score ?? 0).toFixed(3)} = <span className={combined > 0 ? "text-emerald-400" : combined < 0 ? "text-red-400" : "text-slate-300"}>{combined >= 0 ? "+" : ""}{combined.toFixed(4)}</span>
-              {" "}· threshold ±{s.threshold?.toFixed(2)}
+              combinado = 0.75 × {t.signed >= 0 ? "+" : ""}{t.signed.toFixed(3)} + 0.15 × {(oc.aggregate ?? 0) >= 0 ? "+" : ""}{(oc.aggregate ?? 0).toFixed(3)} + 0.10 × {(s.news_score ?? 0) >= 0 ? "+" : ""}{(s.news_score ?? 0).toFixed(3)} = <span className={combined > 0 ? "text-emerald-400" : combined < 0 ? "text-red-400" : "text-slate-300"}>{combined >= 0 ? "+" : ""}{combined.toFixed(4)}</span>
+              {" "}· limiar ±{s.threshold?.toFixed(2)}
             </div>
           </td>
         </tr>
@@ -507,7 +533,7 @@ export default function CryptoConfidencePage() {
                     <th className="py-2 px-3 text-left">On-chain 15%</th>
                     <th className="py-2 px-3 text-left">Notícias 10%</th>
                     <th className="py-2 px-3 text-left min-w-[140px]">Combinado</th>
-                    <th className="py-2 px-3 text-left">ML gate</th>
+                    <th className="py-2 px-3 text-left">Filtro ML</th>
                     <th className="py-2 px-3 text-left">HTF</th>
                     <th className="py-2 px-3 text-left">Decisão</th>
                   </tr>
