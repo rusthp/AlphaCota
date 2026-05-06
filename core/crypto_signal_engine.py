@@ -55,12 +55,17 @@ _REGIME_WEIGHTS: dict[str, tuple[float, float, float, float]] = {
 }
 
 # Weights for final (TA vs news) combination.
-_WEIGHT_TECHNICAL = 0.7
-_WEIGHT_NEWS = 0.3
+# News at 0.20 means it cannot push a below-threshold technical signal over the entry
+# bar on its own (max news contribution = 0.20 × 1.0 = 0.20, threshold gap = 0.03).
+# EMA + MACD agreement (composite = 0.80) is sufficient to clear 0.63 without news.
+_WEIGHT_TECHNICAL = 0.80
+_WEIGHT_NEWS = 0.20
 
 # Thresholds.
-_LONG_THRESHOLD = 0.6
-_SHORT_THRESHOLD = -0.6
+# 0.63 requires EMA + MACD both aligned (composite ≥ 0.80 in trending regime).
+# A single indicator alone (composite ≤ 0.45) can never cross the bar alone.
+_LONG_THRESHOLD = 0.63
+_SHORT_THRESHOLD = -0.63
 _MIN_SIGNAL_CONFIDENCE = 0.65
 
 # ADX thresholds for regime classification.

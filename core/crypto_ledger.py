@@ -367,3 +367,54 @@ def get_recent_trades(
         }
         for row in rows
     ]
+
+
+def get_symbol_win_rate(
+    conn: sqlite3.Connection,
+    symbol: str,
+    mode: str,
+    window: int = 10,
+) -> float | None:
+    """Return the win rate for a symbol over the last `window` closed trades.
+
+    Used by the trading loop to skip symbols that are performing poorly —
+    symbols with a win rate below the caller's threshold are candidates for
+    temporary exclusion.
+
+    Args:
+        conn: Open sqlite3 connection.
+        symbol: Trading pair (e.g. "BTCUSDT").
+        mode: "paper" or "live".
+        window: Number of most-recent trades to sample (default 10).
+
+    Returns:
+        Win rate in [0.0, 1.0], or None when fewer than `window` trades exist
+        (insufficient history to make a reliable judgement).
+    """
+    try:
+        row = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) AS wins
+            FROM (
+                SELECT realized_pnl
+                  FROM crypto_trades
+                 WHERE mode    = ?
+                   AND symbol  = ?
+                 ORDER BY closed_at DESC
+                 LIMIT ?
+            )
+            """,
+            (mode, symbol, window),
+        ).fetchone()
+    except sqlite3.Error as exc:
+        logger.warning("get_symbol_win_rate(%s): %s", symbol, exc)
+        return None
+
+    total = int(row["total"]) if row and row["total"] else 0
+    if total < window:
+        return None
+
+    wins = int(row["wins"]) if row and row["wins"] else 0
+    return round(wins / total, 4)

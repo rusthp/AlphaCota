@@ -454,3 +454,111 @@ class TestGetTopPairs:
 
         assert "BTCUSDT" in result
         assert "ETHUSDT" not in result
+
+
+# ---------------------------------------------------------------------------
+# 8. Signal threshold — news weight / technical weight
+# ---------------------------------------------------------------------------
+
+class TestSignalThresholds:
+    def test_ema_macd_alone_clears_threshold(self):
+        """With 0.80/0.20 weights, EMA+MACD bullish (composite=0.80) clears 0.63."""
+        from core.crypto_signal_engine import _WEIGHT_TECHNICAL, _WEIGHT_NEWS, _LONG_THRESHOLD
+
+        tech_conf = 0.80  # EMA+MACD aligned, no RSI/OBI contribution
+        combined = _WEIGHT_TECHNICAL * tech_conf + _WEIGHT_NEWS * 0.0
+        assert combined > _LONG_THRESHOLD, (
+            f"EMA+MACD should clear threshold: combined={combined:.3f} > {_LONG_THRESHOLD}"
+        )
+
+    def test_single_indicator_cannot_clear_threshold(self):
+        """EMA alone (composite=0.45) must not reach the entry threshold."""
+        from core.crypto_signal_engine import _WEIGHT_TECHNICAL, _LONG_THRESHOLD
+
+        tech_conf = 0.45  # only EMA aligned (MACD flat)
+        combined = _WEIGHT_TECHNICAL * tech_conf
+        assert combined < _LONG_THRESHOLD, (
+            f"Single indicator should NOT clear threshold: combined={combined:.3f} < {_LONG_THRESHOLD}"
+        )
+
+    def test_news_cannot_push_weak_signal_over_threshold(self):
+        """Max news contribution (0.20×1.0=0.20) cannot push EMA-only (0.36) over 0.63."""
+        from core.crypto_signal_engine import _WEIGHT_TECHNICAL, _WEIGHT_NEWS, _LONG_THRESHOLD
+
+        tech_conf = 0.45
+        combined_max = _WEIGHT_TECHNICAL * tech_conf + _WEIGHT_NEWS * 1.0
+        assert combined_max < _LONG_THRESHOLD, (
+            f"News should NOT rescue weak signal: combined_max={combined_max:.3f} < {_LONG_THRESHOLD}"
+        )
+
+    def test_threshold_is_symmetric(self):
+        """LONG and SHORT thresholds must be equal in magnitude."""
+        from core.crypto_signal_engine import _LONG_THRESHOLD, _SHORT_THRESHOLD
+
+        assert _LONG_THRESHOLD == abs(_SHORT_THRESHOLD), (
+            f"Thresholds not symmetric: long={_LONG_THRESHOLD} short={_SHORT_THRESHOLD}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 9. Symbol win-rate gate
+# ---------------------------------------------------------------------------
+
+class TestSymbolWinRate:
+    def _make_symbol_trades(
+        self, conn: sqlite3.Connection, symbol: str, wins: int, total: int, mode: str = "paper"
+    ) -> None:
+        conn.row_factory = sqlite3.Row
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS crypto_trades (
+                id TEXT PRIMARY KEY, symbol TEXT, side TEXT,
+                entry_price REAL, exit_price REAL, qty_usd REAL,
+                realized_pnl REAL, pnl_pct REAL,
+                opened_at REAL, closed_at REAL, exit_reason TEXT, mode TEXT
+            );
+        """)
+        now = time.time()
+        for i in range(total):
+            pnl = 1.0 if i < wins else -0.5
+            conn.execute(
+                "INSERT INTO crypto_trades VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (f"t_{symbol}_{i}", symbol, "long", 100, 101 if pnl > 0 else 99,
+                 10, pnl, pnl / 100, now - i * 100, now - i * 50, "tp_hit" if pnl > 0 else "sl_hit", mode),
+            )
+        conn.commit()
+
+    def test_returns_none_when_insufficient_trades(self):
+        """Returns None when fewer than window trades exist."""
+        from core.crypto_ledger import get_symbol_win_rate
+
+        conn = sqlite3.connect(":memory:")
+        self._make_symbol_trades(conn, "BTCUSDT", wins=3, total=5)
+        result = get_symbol_win_rate(conn, "BTCUSDT", "paper", window=10)
+        assert result is None
+
+    def test_returns_win_rate_when_sufficient_trades(self):
+        """Returns correct win rate when window is met."""
+        from core.crypto_ledger import get_symbol_win_rate
+
+        conn = sqlite3.connect(":memory:")
+        self._make_symbol_trades(conn, "DOGEUSDT", wins=2, total=10)
+        result = get_symbol_win_rate(conn, "DOGEUSDT", "paper", window=10)
+        assert result == 0.2
+
+    def test_poor_symbol_below_threshold(self):
+        """Symbol with 1/10 wins (10%) is below 0.30 threshold."""
+        from core.crypto_ledger import get_symbol_win_rate
+
+        conn = sqlite3.connect(":memory:")
+        self._make_symbol_trades(conn, "ETHUSDT", wins=1, total=10)
+        result = get_symbol_win_rate(conn, "ETHUSDT", "paper", window=10)
+        assert result is not None and result < 0.30
+
+    def test_mode_isolation(self):
+        """Live trades do not affect paper win rate."""
+        from core.crypto_ledger import get_symbol_win_rate
+
+        conn = sqlite3.connect(":memory:")
+        self._make_symbol_trades(conn, "BTCUSDT", wins=0, total=10, mode="live")
+        result = get_symbol_win_rate(conn, "BTCUSDT", "paper", window=10)
+        assert result is None

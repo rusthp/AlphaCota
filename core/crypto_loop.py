@@ -61,6 +61,7 @@ from core.crypto_ledger import (
     get_balance_estimate,
     get_daily_pnl,
     get_open_positions,
+    get_symbol_win_rate,
     write_pnl_snapshot,
 )
 from core.crypto_news_engine import fetch_news, score_news_sentiment
@@ -95,6 +96,9 @@ _LOOP_INTERVAL = int(os.getenv("CRYPTO_LOOP_INTERVAL_SECONDS", "300"))
 _INITIAL_BALANCE = float(os.getenv("CRYPTO_INITIAL_BALANCE_USD", "1000.0"))
 _TOP_PAIRS_LIMIT = 10
 _PNL_SNAPSHOT_EVERY = 12
+# Skip a symbol when its last N trades show win rate below this threshold.
+_SYMBOL_WIN_RATE_WINDOW = int(os.getenv("CRYPTO_SYMBOL_WIN_RATE_WINDOW", "10"))
+_SYMBOL_MIN_WIN_RATE = float(os.getenv("CRYPTO_SYMBOL_MIN_WIN_RATE", "0.30"))
 _CANDLE_INTERVAL = "15m"
 _CANDLE_LIMIT = 100
 _NEWS_LIMIT = 20
@@ -225,6 +229,15 @@ def _process_symbol(
         return (None, 0.0, False)
 
     last_price = candles[-1].close
+
+    # Per-symbol win-rate gate: skip symbols with sustained poor performance.
+    win_rate = get_symbol_win_rate(conn, symbol, mode, _SYMBOL_WIN_RATE_WINDOW)  # type: ignore[arg-type]
+    if win_rate is not None and win_rate < _SYMBOL_MIN_WIN_RATE:
+        logger.info(
+            "process: %s win_rate=%.0f%% below %.0f%% threshold — skipping",
+            symbol, win_rate * 100, _SYMBOL_MIN_WIN_RATE * 100,
+        )
+        return (None, last_price, False)
 
     # Higher-timeframe trend filter: 4H candles for EMA50/EMA200 trend bias.
     htf_candles = None
