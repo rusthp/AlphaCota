@@ -85,7 +85,7 @@ except Exception as _ml_import_err:
     logger.warning("crypto_loop: ML model unavailable — %s", _ml_import_err)
     _ML_AVAILABLE = False
 
-_ML_MIN_CONFIDENCE = float(os.getenv("CRYPTO_ML_MIN_CONFIDENCE", "0.60"))
+_ML_MIN_CONFIDENCE = float(os.getenv("CRYPTO_ML_MIN_CONFIDENCE", "0.55"))
 from core.crypto_telegram import (
     notify_position_opened,
     notify_position_closed,

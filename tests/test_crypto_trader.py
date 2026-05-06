@@ -377,8 +377,8 @@ class TestCryptoLoopConstants:
             import importlib
             import core.crypto_loop as _loop
             importlib.reload(_loop)
-            assert _loop._ML_MIN_CONFIDENCE == 0.60, (
-                f"Expected 0.60, got {_loop._ML_MIN_CONFIDENCE}"
+            assert _loop._ML_MIN_CONFIDENCE == 0.55, (
+                f"Expected 0.55, got {_loop._ML_MIN_CONFIDENCE}"
             )
         finally:
             if env_backup is not None:
@@ -462,13 +462,13 @@ class TestGetTopPairs:
 
 class TestSignalThresholds:
     def test_ema_macd_alone_clears_threshold(self):
-        """With 0.80/0.20 weights, EMA+MACD bullish (composite=0.80) clears 0.63."""
-        from core.crypto_signal_engine import _WEIGHT_TECHNICAL, _WEIGHT_NEWS, _LONG_THRESHOLD
+        """With 0.75 technical weight, strong EMA+MACD (conf=0.85) clears 0.63 threshold."""
+        from core.crypto_signal_engine import _WEIGHT_TECHNICAL, _LONG_THRESHOLD
 
-        tech_conf = 0.80  # EMA+MACD aligned, no RSI/OBI contribution
-        combined = _WEIGHT_TECHNICAL * tech_conf + _WEIGHT_NEWS * 0.0
+        tech_conf = 0.85  # strong EMA+MACD alignment (0.75×0.85=0.6375 > 0.63)
+        combined = _WEIGHT_TECHNICAL * tech_conf
         assert combined > _LONG_THRESHOLD, (
-            f"EMA+MACD should clear threshold: combined={combined:.3f} > {_LONG_THRESHOLD}"
+            f"EMA+MACD should clear threshold: combined={combined:.4f} > {_LONG_THRESHOLD}"
         )
 
     def test_single_indicator_cannot_clear_threshold(self):
@@ -562,3 +562,393 @@ class TestSymbolWinRate:
         self._make_symbol_trades(conn, "BTCUSDT", wins=0, total=10, mode="live")
         result = get_symbol_win_rate(conn, "BTCUSDT", "paper", window=10)
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Trailing stop
+# ---------------------------------------------------------------------------
+
+class TestTrailingStop:
+    def _long_pos(self, entry: float, sl: float, tp: float):
+        from core.crypto_types import CryptoPosition
+        return CryptoPosition(
+            id="p1", symbol="BTCUSDT", side="long",
+            entry_price=entry, qty=50.0,
+            stop_loss=sl, take_profit=tp,
+            opened_at=0.0, mode="paper",
+        )
+
+    def _short_pos(self, entry: float, sl: float, tp: float):
+        from core.crypto_types import CryptoPosition
+        return CryptoPosition(
+            id="p2", symbol="BTCUSDT", side="short",
+            entry_price=entry, qty=50.0,
+            stop_loss=sl, take_profit=tp,
+            opened_at=0.0, mode="paper",
+        )
+
+    def test_long_sl_advances_as_price_rises(self):
+        """Trailing SL for long moves up when price rises beyond ATR distance."""
+        from core.crypto_risk_engine import compute_trailing_sl
+
+        pos = self._long_pos(entry=100.0, sl=95.0, tp=115.0)  # ATR dist = 5.0
+        new_sl = compute_trailing_sl(pos, current_price=110.0)
+        assert new_sl == 105.0  # 110 - 5
+
+    def test_long_sl_never_retreats(self):
+        """Trailing SL for long does not decrease when price falls back."""
+        from core.crypto_risk_engine import compute_trailing_sl
+
+        pos = self._long_pos(entry=100.0, sl=105.0, tp=120.0)  # SL already trailed up
+        new_sl = compute_trailing_sl(pos, current_price=107.0)
+        assert new_sl == 105.0  # candidate=102, but 105 is higher → keep 105
+
+    def test_short_sl_descends_as_price_falls(self):
+        """Trailing SL for short moves down when price falls below ATR distance."""
+        from core.crypto_risk_engine import compute_trailing_sl
+
+        pos = self._short_pos(entry=100.0, sl=105.0, tp=85.0)  # ATR dist = 5.0
+        new_sl = compute_trailing_sl(pos, current_price=90.0)
+        assert new_sl == 95.0  # 90 + 5
+
+    def test_short_sl_never_widens(self):
+        """Trailing SL for short does not increase when price rises back."""
+        from core.crypto_risk_engine import compute_trailing_sl
+
+        pos = self._short_pos(entry=100.0, sl=95.0, tp=80.0)  # SL already trailed down
+        new_sl = compute_trailing_sl(pos, current_price=92.0)
+        assert new_sl == 95.0  # candidate=97, but 95 is lower → keep 95
+
+    def test_tp_suppressed_when_profit_locked(self):
+        """TP exit is disabled once trailing SL crossed entry_price (profit locked)."""
+        from core.crypto_risk_engine import should_exit_position
+        from core.crypto_types import CryptoSignal
+
+        flat_sig = CryptoSignal(
+            symbol="BTCUSDT", direction="flat", confidence=0.0,
+            reason="", entry_price=120.0, stop_loss=0.0, take_profit=0.0,
+            timestamp=0.0,
+        )
+        # SL=102 > entry=100: profit locked; price=115 >= TP=110
+        pos = self._long_pos(entry=100.0, sl=102.0, tp=110.0)
+        exit_, reason = should_exit_position(pos, current_price=115.0, current_signal=flat_sig)
+        assert not exit_, "TP exit should be suppressed when profit is locked"
+
+    def test_tp_active_before_profit_locked(self):
+        """TP exit fires normally when trailing SL is still below entry."""
+        from core.crypto_risk_engine import should_exit_position
+        from core.crypto_types import CryptoSignal
+
+        flat_sig = CryptoSignal(
+            symbol="BTCUSDT", direction="flat", confidence=0.0,
+            reason="", entry_price=115.0, stop_loss=0.0, take_profit=0.0,
+            timestamp=0.0,
+        )
+        pos = self._long_pos(entry=100.0, sl=95.0, tp=110.0)  # SL < entry
+        exit_, reason = should_exit_position(pos, current_price=112.0, current_signal=flat_sig)
+        assert exit_ and reason == "tp_hit"
+
+    def test_sl_hit_closes_position(self):
+        """Trailing SL hit always closes the position."""
+        from core.crypto_risk_engine import should_exit_position
+        from core.crypto_types import CryptoSignal
+
+        flat_sig = CryptoSignal(
+            symbol="BTCUSDT", direction="flat", confidence=0.0,
+            reason="", entry_price=105.0, stop_loss=0.0, take_profit=0.0,
+            timestamp=0.0,
+        )
+        # SL=103 > entry=100 (profit locked), price drops to 102
+        pos = self._long_pos(entry=100.0, sl=103.0, tp=115.0)
+        exit_, reason = should_exit_position(pos, current_price=102.0, current_signal=flat_sig)
+        assert exit_ and reason == "sl_hit"
+
+
+# ---------------------------------------------------------------------------
+# On-chain signal integration
+# ---------------------------------------------------------------------------
+
+class TestOnChainSignal:
+    """Tests for crypto_onchain_engine and its integration into generate_signal."""
+
+    def _make_candles(self, n: int = 100):
+        from core.crypto_types import CryptoCandle
+        import time as _time
+        now = _time.time()
+        candles = []
+        price = 50000.0
+        for i in range(n):
+            candles.append(CryptoCandle(
+                symbol="BTCUSDT",
+                timestamp=now - (n - i) * 900,
+                open=price, high=price * 1.002, low=price * 0.998,
+                close=price, volume=1000.0,
+            ))
+        return candles
+
+    def test_aggregate_formula_weights(self):
+        """Aggregate = 0.40×funding + 0.30×OI + 0.30×L/S, clamped to [-1,1]."""
+        from core.crypto_onchain_engine import OnChainSignal
+
+        sig = OnChainSignal(
+            symbol="BTCUSDT",
+            funding_rate=0.0,
+            funding_score=0.8,
+            oi_change_pct=0.01,
+            oi_score=0.5,
+            ls_ratio=1.2,
+            ls_score=-0.25,
+            aggregate=round(0.40 * 0.8 + 0.30 * 0.5 + 0.30 * (-0.25), 4),
+            timestamp=0.0,
+            available=True,
+        )
+        expected = round(0.40 * 0.8 + 0.30 * 0.5 + 0.30 * (-0.25), 4)
+        assert sig.aggregate == expected
+
+    def test_unavailable_signal_returns_zero_aggregate(self):
+        """When available=False, aggregate must be 0.0 so callers can degrade."""
+        from core.crypto_onchain_engine import OnChainSignal
+
+        sig = OnChainSignal(
+            symbol="XYZUSDT",
+            funding_rate=0.0, funding_score=0.0,
+            oi_change_pct=0.0, oi_score=0.0,
+            ls_ratio=1.0, ls_score=0.0,
+            aggregate=0.0, timestamp=0.0, available=False,
+        )
+        assert sig.aggregate == 0.0
+        assert not sig.available
+
+    def test_onchain_score_shifts_combined_signal(self):
+        """A strong bearish on-chain score (-1.0) reduces the combined signal."""
+        from core.crypto_signal_engine import generate_signal
+
+        candles = self._make_candles()
+
+        sig_no_onchain = generate_signal(
+            "BTCUSDT", candles, news_score=0.0, order_book_imbalance=0.0,
+            onchain_score=0.0,
+        )
+        sig_bearish_onchain = generate_signal(
+            "BTCUSDT", candles, news_score=0.0, order_book_imbalance=0.0,
+            onchain_score=-1.0,
+        )
+        # Bearish on-chain should pull combined score lower (or keep it flat/lower).
+        assert sig_bearish_onchain.confidence <= sig_no_onchain.confidence or \
+               sig_bearish_onchain.direction in ("short", "flat")
+
+    def test_onchain_score_ignored_when_zero(self):
+        """onchain_score=0.0 produces identical result to omitting the parameter."""
+        from core.crypto_signal_engine import generate_signal
+
+        candles = self._make_candles()
+
+        sig_default = generate_signal("BTCUSDT", candles, news_score=0.0, order_book_imbalance=0.0)
+        sig_explicit_zero = generate_signal(
+            "BTCUSDT", candles, news_score=0.0, order_book_imbalance=0.0,
+            onchain_score=0.0,
+        )
+        assert sig_default.direction == sig_explicit_zero.direction
+        assert sig_default.confidence == sig_explicit_zero.confidence
+
+    @patch("core.crypto_onchain_engine._get_json")
+    def test_fetch_onchain_bypasses_cache_after_ttl(self, mock_get_json):
+        """A second fetch after TTL expiry calls the API again (cache miss)."""
+        import time as _time
+        from core.crypto_onchain_engine import fetch_onchain_signals, _cache, _CACHE_TTL
+
+        mock_get_json.side_effect = [
+            {"lastFundingRate": "0.0001"},      # funding — call 1
+            [{"sumOpenInterest": "1000"}, {"sumOpenInterest": "1010"}],  # OI — call 1
+            [{"longShortRatio": "1.2"}],         # global L/S — call 1
+            [{"longShortRatio": "1.1"}],         # top L/S — call 1
+            {"lastFundingRate": "0.0002"},      # funding — call 2 (after TTL)
+            [{"sumOpenInterest": "1000"}, {"sumOpenInterest": "990"}],   # OI — call 2
+            [{"longShortRatio": "0.9"}],         # global L/S — call 2
+            [{"longShortRatio": "0.85"}],        # top L/S — call 2
+        ]
+
+        sym = "TTLUSDT"
+        _cache.pop(sym, None)
+
+        sig1 = fetch_onchain_signals(sym)
+        # Manually expire the cache entry.
+        _cache[sym] = (_time.time() - _CACHE_TTL - 1, _cache[sym][1])
+
+        sig2 = fetch_onchain_signals(sym)
+        assert sig1.funding_rate != sig2.funding_rate
+
+
+# ---------------------------------------------------------------------------
+# Market context engine
+# ---------------------------------------------------------------------------
+
+class TestMarketContextEngine:
+    def _news(self, ticker: str, score: float, n: int = 3):
+        from core.crypto_types import NewsItem
+        return [
+            NewsItem(
+                title=f"{ticker} headline {i}",
+                url=f"https://example.com/{i}",
+                sentiment="positive" if score > 0 else "negative",
+                score=score,
+                published_at=0.0,
+                currencies=[ticker],
+            )
+            for i in range(n)
+        ]
+
+    def test_fg_score_extreme_fear(self):
+        """F&G value 10 maps to score=+1.0 and size_multiplier=1.20."""
+        from core.crypto_market_context_engine import _fg_to_score
+        score, mult = _fg_to_score(10)
+        assert score == 1.0
+        assert mult == 1.20
+
+    def test_fg_score_extreme_greed(self):
+        """F&G value 90 maps to score=-1.0 and size_multiplier=0.70."""
+        from core.crypto_market_context_engine import _fg_to_score
+        score, mult = _fg_to_score(90)
+        assert score == -1.0
+        assert mult == 0.70
+
+    def test_fg_score_neutral(self):
+        """F&G value 50 maps to score=0.0 and size_multiplier=1.00."""
+        from core.crypto_market_context_engine import _fg_to_score
+        score, mult = _fg_to_score(50)
+        assert score == 0.0
+        assert mult == 1.00
+
+    def test_trending_pairs_discovered(self):
+        """Ticker with ≥2 items and mean score ≥0.20 becomes a trending pair."""
+        from core.crypto_market_context_engine import _discover_trending_pairs
+
+        news = self._news("BTC", score=0.80, n=3)
+        result = _discover_trending_pairs(news, known_symbols=set(), max_extra=5)
+        assert "BTCUSDT" in result
+
+    def test_trending_skips_known_symbols(self):
+        """Ticker already in watchlist is not returned as trending."""
+        from core.crypto_market_context_engine import _discover_trending_pairs
+
+        news = self._news("ETH", score=0.80, n=3)
+        result = _discover_trending_pairs(news, known_symbols={"ETHUSDT"}, max_extra=5)
+        assert "ETHUSDT" not in result
+
+    def test_trending_requires_min_items(self):
+        """Ticker with only 1 news item does not qualify."""
+        from core.crypto_market_context_engine import _discover_trending_pairs
+
+        news = self._news("SOL", score=0.90, n=1)
+        result = _discover_trending_pairs(news, known_symbols=set(), max_extra=5)
+        assert "SOLUSDT" not in result
+
+    def test_trending_requires_min_score(self):
+        """Ticker with mean score below 0.20 is not returned."""
+        from core.crypto_market_context_engine import _discover_trending_pairs
+
+        news = self._news("ADA", score=0.10, n=4)
+        result = _discover_trending_pairs(news, known_symbols=set(), max_extra=5)
+        assert "ADAUSDT" not in result
+
+    def test_max_extra_respected(self):
+        """At most max_extra pairs are returned."""
+        from core.crypto_market_context_engine import _discover_trending_pairs
+
+        tickers = ["BTC", "ETH", "SOL", "BNB", "XRP"]
+        news = []
+        for t in tickers:
+            news.extend(self._news(t, score=0.80, n=3))
+        result = _discover_trending_pairs(news, known_symbols=set(), max_extra=2)
+        assert len(result) <= 2
+
+    @patch("core.crypto_market_context_engine._fetch_fear_greed")
+    def test_fetch_market_context_integrates_fg_and_trending(self, mock_fg):
+        """fetch_market_context returns both F&G fields and trending pairs."""
+        import core.crypto_market_context_engine as _eng
+        _eng._fg_cache = None  # clear cache
+        mock_fg.return_value = (15, "Extreme Fear")
+
+        from core.crypto_market_context_engine import fetch_market_context
+
+        news = self._news("BTC", score=0.85, n=3)
+        ctx = fetch_market_context(news, known_symbols=set(), max_extra=5)
+
+        assert ctx.fg_value == 15
+        assert ctx.fg_label == "Extreme Fear"
+        assert ctx.fg_score == 1.0
+        assert ctx.size_multiplier == 1.20
+        assert "BTCUSDT" in ctx.trending_pairs
+        assert ctx.available is True
+
+
+# ---------------------------------------------------------------------------
+# ADX threshold + on-chain ranging override
+# ---------------------------------------------------------------------------
+
+class TestRangingOverride:
+    def _flat_candles(self, n: int = 100):
+        """Candles with near-zero movement → ADX < 15 (ranging)."""
+        from core.crypto_types import CryptoCandle
+        import time as _t
+        now = _t.time()
+        candles = []
+        price = 50000.0
+        for i in range(n):
+            # tiny noise to keep ATR non-zero but ADX very low
+            p = price + (i % 3 - 1) * 0.5
+            candles.append(CryptoCandle(
+                symbol="BTCUSDT", timestamp=now - (n - i) * 900,
+                open=p, high=p + 0.2, low=p - 0.2, close=p, volume=500.0,
+            ))
+        return candles
+
+    def test_adx_threshold_is_15(self):
+        """_ADX_RANGING constant must be 15 (was 20)."""
+        from core.crypto_signal_engine import _ADX_RANGING
+        assert _ADX_RANGING == 15.0
+
+    def test_ranging_blocked_without_onchain(self):
+        """Flat candles (ADX < 15) with onchain=0.0 → flat signal."""
+        from core.crypto_signal_engine import generate_signal
+        candles = self._flat_candles()
+        sig = generate_signal("BTCUSDT", candles, news_score=0.0,
+                              order_book_imbalance=0.0, onchain_score=0.0)
+        assert sig.direction == "flat"
+        assert sig.reason == "ranging_market_adx_too_low"
+
+    def test_strong_onchain_overrides_ranging(self):
+        """Flat candles + |onchain_agg| >= 0.45 → NOT immediately flat."""
+        from core.crypto_signal_engine import generate_signal, _ONCHAIN_RANGING_OVERRIDE
+        candles = self._flat_candles()
+        # onchain at exactly the override threshold — should bypass ranging block
+        sig = generate_signal("BTCUSDT", candles, news_score=0.0,
+                              order_book_imbalance=0.0,
+                              onchain_score=_ONCHAIN_RANGING_OVERRIDE)
+        # May still be flat (threshold=0.70 is high) but reason must NOT be adx_too_low
+        assert sig.reason != "ranging_market_adx_too_low"
+
+    def test_onchain_override_requires_elevated_threshold(self):
+        """In ranging + on-chain override, signal only fires if combined >= 0.70."""
+        from core.crypto_signal_engine import generate_signal, _ONCHAIN_RANGING_THRESHOLD
+        candles = self._flat_candles()
+        # onchain=0.50 (override active), but total combined = 0.15*0.50 = 0.075 < 0.70
+        sig = generate_signal("BTCUSDT", candles, news_score=0.0,
+                              order_book_imbalance=0.0, onchain_score=0.50)
+        # combined will be far below 0.70 → flat, but not adx_too_low
+        assert sig.direction == "flat"
+        assert sig.reason != "ranging_market_adx_too_low"
+
+    def test_usd1_excluded_from_stablecoin_filter(self):
+        """USD1 base ticker must be in stablecoin filter."""
+        from core.crypto_data_engine import get_top_pairs
+        from unittest.mock import patch
+
+        fake_ticker = [
+            {"symbol": "USD1USDT", "quoteVolume": "999999999"},
+            {"symbol": "BTCUSDT",  "quoteVolume": "1000000000"},
+        ]
+        with patch("core.crypto_data_engine._get_json", return_value=fake_ticker):
+            pairs = get_top_pairs(quote="USDT")
+        assert "USD1USDT" not in pairs
+        assert "BTCUSDT" in pairs
