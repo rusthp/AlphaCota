@@ -144,6 +144,17 @@ def execute_live(
     if signal.direction == "flat":
         raise ValueError("execute_live: cannot execute a flat signal")
 
+    # Binance Spot does not support shorting — a SELL on spot would liquidate
+    # an existing asset balance (which we don't hold), not open a short.
+    # True shorts require Margin or Futures (not wired). Reject explicitly so
+    # the bot never accidentally dumps balances on a short signal.
+    if signal.direction == "short":
+        raise ValueError(
+            "execute_live: short signals are unsupported on Binance Spot. "
+            "Enable Margin/Futures and rewire to support shorts, or filter them "
+            "out upstream when running in live mode."
+        )
+
     min_notional = _MIN_NOTIONAL.get(signal.symbol, _DEFAULT_MIN_NOTIONAL)
     if size_usd < min_notional:
         raise ValueError(

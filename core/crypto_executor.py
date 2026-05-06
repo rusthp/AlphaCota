@@ -56,7 +56,31 @@ def execute_paper(
     side = "buy" if signal.direction == "long" else "sell"
     pos_side = "long" if signal.direction == "long" else "short"
 
+    # Atomic uniqueness guard — prevents the race where two concurrent
+    # _process_symbol calls (e.g. two loop processes, or a tick that overlaps
+    # with a slow previous tick) both observe "no open position" and race to
+    # insert duplicates for the same symbol+mode. We take an IMMEDIATE
+    # transaction so SQLite serialises the read+write, then check inside the
+    # same transaction. If a position already exists we abort cleanly.
     try:
+        # Begin an exclusive write transaction to lock the database for this
+        # read-then-write sequence. Without this, two processes can both see
+        # zero rows and both insert.
+        conn.execute("BEGIN IMMEDIATE")
+        existing = conn.execute(
+            "SELECT 1 FROM crypto_positions WHERE symbol = ? AND mode = 'paper' LIMIT 1",
+            (signal.symbol,),
+        ).fetchone()
+        if existing is not None:
+            conn.rollback()
+            logger.info(
+                "execute_paper: %s already has an open paper position — refusing duplicate",
+                signal.symbol,
+            )
+            raise ValueError(
+                f"execute_paper: open paper position already exists for {signal.symbol}"
+            )
+
         conn.execute(
             """
             INSERT INTO crypto_orders
@@ -86,6 +110,10 @@ def execute_paper(
         )
         conn.commit()
     except sqlite3.Error as exc:
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
         logger.error("execute_paper: db error %s", exc)
         raise
 

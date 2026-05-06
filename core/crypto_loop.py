@@ -390,6 +390,11 @@ def _process_symbol(
             execute_paper(signal_obj, size_usd, conn)  # type: ignore[arg-type]
             notify_position_opened(signal_obj, size_usd, signal_obj.reason, mode)
             return (signal_obj, last_price, True)
+        except ValueError as exc:
+            # Expected on the duplicate-position guard inside execute_paper:
+            # log informationally rather than as an error so dashboards stay clean.
+            logger.info("process: execute_paper(%s) skipped: %s", symbol, exc)
+            return (signal_obj, last_price, False)
         except Exception as exc:
             logger.error("process: execute_paper(%s) failed: %s", symbol, exc)
             return (signal_obj, last_price, False)
@@ -515,6 +520,12 @@ def run_loop(mode: str = "paper", max_iterations: int = 0) -> None:
 
                 # Build set of symbols that already have an open position so
                 # _process_symbol never opens a second position for the same pair.
+                # NOTE on shorts: on Binance Spot, a "SELL" order liquidates an
+                # existing asset balance — it does NOT open a short position.
+                # The loop / signal engine can still emit short signals for
+                # paper-mode backtesting, but live mode will reject them via
+                # the live executor when no asset balance exists. Margin/Futures
+                # would be required for true short exposure (not wired here).
                 existing_positions = get_open_positions(conn, mode)
                 open_symbols: set[str] = {p.symbol for p in existing_positions}
 
