@@ -47,11 +47,11 @@ _WEIGHT_MACD = 0.3
 _WEIGHT_RSI = 0.2
 _WEIGHT_OBI = 0.1
 
-# Per-regime weight tables (EMA, MACD, RSI, OBI — must each sum to 1.0).
-_REGIME_WEIGHTS: dict[str, tuple[float, float, float, float]] = {
-    "trending":  (0.45, 0.35, 0.10, 0.10),  # follow the trend
-    "ranging":   (0.20, 0.20, 0.45, 0.15),  # mean-reversion via RSI
-    "volatile":  (0.30, 0.30, 0.25, 0.15),  # balanced — extra caution
+# Per-regime weight tables (EMA, MACD, RSI, OBI, VWAP, Volume — must each sum to 1.0).
+_REGIME_WEIGHTS: dict[str, tuple[float, float, float, float, float, float]] = {
+    "trending":  (0.35, 0.25, 0.10, 0.10, 0.10, 0.10),  # follow the trend
+    "ranging":   (0.15, 0.15, 0.35, 0.15, 0.10, 0.10),  # mean-reversion via RSI
+    "volatile":  (0.25, 0.25, 0.20, 0.10, 0.10, 0.10),  # balanced — extra caution
 }
 
 # Weights for final combination.
@@ -330,6 +330,48 @@ def calculate_atr(candles: list[CryptoCandle], period: int = 14) -> float:
 
 
 # ---------------------------------------------------------------------------
+# VWAP and volume spike helpers (pure)
+# ---------------------------------------------------------------------------
+
+
+def calculate_vwap(candles: list[CryptoCandle], period: int = 50) -> float:
+    """Rolling VWAP over the last `period` candles.
+
+    Typical price = (high + low + close) / 3.
+    Returns 0.0 when volume sums to zero (e.g. synthetic test data).
+    """
+    recent = candles[-period:] if len(candles) >= period else candles
+    tp_vol = sum((c.high + c.low + c.close) / 3.0 * c.volume for c in recent)
+    vol_sum = sum(c.volume for c in recent)
+    return tp_vol / vol_sum if vol_sum > 0 else 0.0
+
+
+def compute_volume_spike(
+    candles: list[CryptoCandle],
+    period: int = 20,
+    multiplier: float = 1.5,
+) -> float:
+    """Detect a volume spike on the last candle relative to the prior `period`.
+
+    Returns +1.0 if current candle is bullish (close > open) with a spike,
+    -1.0 if bearish with a spike, 0.0 if no spike or insufficient data.
+    Spikes without a clear body direction return 0.0 (doji candles).
+    """
+    if len(candles) < period + 1:
+        return 0.0
+    avg_vol = sum(c.volume for c in candles[-(period + 1):-1]) / period
+    if avg_vol <= 0:
+        return 0.0
+    last = candles[-1]
+    if last.volume <= avg_vol * multiplier:
+        return 0.0
+    body = last.close - last.open
+    if abs(body) < (last.high - last.low) * 0.1:
+        return 0.0  # doji — spike with no direction
+    return 1.0 if body > 0 else -1.0
+
+
+# ---------------------------------------------------------------------------
 # Technical composite (pure)
 # ---------------------------------------------------------------------------
 
@@ -339,28 +381,23 @@ def compute_technical_signal(
     order_book_imbalance: float = 0.0,
     regime: str = "trending",
 ) -> tuple[str, float]:
-    """Combine EMA cross, MACD histogram, RSI, and order-book imbalance.
+    """Combine EMA cross, MACD histogram, RSI, OBI, VWAP, and volume spike.
 
     Components (each in [-1, 1]):
-        EMA  : +1 if EMA20 > EMA50, -1 if below, 0 if equal / warmup.
-               Adjustment when RSI is overbought/oversold (see RSI component).
-        MACD : sign of the most recent MACD histogram value.
-        RSI  : -0.5 if RSI > 70 (overbought, bearish tilt), +0.5 if < 30
-               (oversold, bullish tilt), 0 otherwise.
-        OBI  : order-book imbalance passed through untouched (already in [-1, 1]).
+        EMA    : +1 if EMA20 > EMA50, -1 if below, 0 if equal / warmup.
+        MACD   : sign of the most recent MACD histogram value.
+        RSI    : -0.5 if RSI > 70 (overbought), +0.5 if < 30 (oversold), 0 otherwise.
+        OBI    : order-book imbalance in [-1, 1].
+        VWAP   : +1 if close > VWAP(50), -1 if below — institutional price anchor.
+        Volume : +1/-1 if a volume spike (>1.5× avg) with bullish/bearish body; else 0.
 
-    The weighted sum is normalised to [-1, 1] and returned as
-    (direction, confidence), where direction is "long" / "short" / "flat"
-    and confidence is |composite| — a flat direction is emitted when the
-    signal magnitude is below 0.25 (noise floor).
-
-    Args:
-        candles: Ordered oldest → newest. Need at least 50 candles for the
-                 slow EMA to warm up. Fewer returns ("flat", 0.0).
-        order_book_imbalance: Book imbalance in [-1, 1].
+    Regime weights (sum to 1.0 per regime):
+        trending : EMA 0.35, MACD 0.25, RSI 0.10, OBI 0.10, VWAP 0.10, Vol 0.10
+        ranging  : EMA 0.15, MACD 0.15, RSI 0.35, OBI 0.15, VWAP 0.10, Vol 0.10
+        volatile : EMA 0.25, MACD 0.25, RSI 0.20, OBI 0.10, VWAP 0.10, Vol 0.10
 
     Returns:
-        (direction, confidence) with confidence in [0, 1].
+        (direction, confidence) — flat when composite < 0.25 noise floor.
     """
     if len(candles) < 50:
         return ("flat", 0.0)
@@ -399,14 +436,30 @@ def compute_technical_signal(
     # ---- OBI component (clamped) ----
     obi_component = max(-1.0, min(1.0, float(order_book_imbalance)))
 
-    w_ema, w_macd, w_rsi, w_obi = _REGIME_WEIGHTS.get(regime, _REGIME_WEIGHTS["trending"])
+    # ---- VWAP component ----
+    vwap = calculate_vwap(candles, period=50)
+    last_close = candles[-1].close
+    vwap_component = 0.0
+    if vwap > 0:
+        if last_close > vwap * 1.0005:
+            vwap_component = 1.0
+        elif last_close < vwap * 0.9995:
+            vwap_component = -1.0
+
+    # ---- Volume spike component ----
+    vol_component = compute_volume_spike(candles, period=20, multiplier=1.5)
+
+    w_ema, w_macd, w_rsi, w_obi, w_vwap, w_vol = _REGIME_WEIGHTS.get(
+        regime, _REGIME_WEIGHTS["trending"]
+    )
     composite = (
         w_ema  * ema_component
         + w_macd * macd_component
         + w_rsi  * rsi_component
         + w_obi  * obi_component
+        + w_vwap * vwap_component
+        + w_vol  * vol_component
     )
-    # Composite already in [-1, 1] given the weights sum to 1 and components clamped.
     composite = max(-1.0, min(1.0, composite))
 
     # Noise floor — treat tiny composites as flat.
@@ -694,6 +747,10 @@ def decompose_signal(
     tech_dir, tech_conf = compute_technical_signal(candles, order_book_imbalance, regime)
     tech_signed = tech_conf if tech_dir == "long" else (-tech_conf if tech_dir == "short" else 0.0)
 
+    vwap = calculate_vwap(candles, period=50)
+    last_close = candles[-1].close
+    vol_spike = compute_volume_spike(candles, period=20, multiplier=1.5)
+
     clamped_news = max(-1.0, min(1.0, float(news_score)))
     clamped_onchain = max(-1.0, min(1.0, float(onchain_score)))
     combined = (
@@ -745,4 +802,13 @@ def decompose_signal(
         "decision": decision,
         "would_enter": decision != "flat",
         "skip_reason": skip_reason,
+        "vwap": {
+            "value": round(vwap, 8),
+            "price_vs_vwap": round((last_close - vwap) / vwap * 100, 3) if vwap > 0 else 0.0,
+            "above": last_close > vwap,
+        },
+        "volume_spike": {
+            "detected": vol_spike != 0.0,
+            "direction": "long" if vol_spike > 0 else ("short" if vol_spike < 0 else "none"),
+        },
     }

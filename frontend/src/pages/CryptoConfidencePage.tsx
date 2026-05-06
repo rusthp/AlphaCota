@@ -73,6 +73,8 @@ interface SymbolDecomp {
   skip_reason?: string | null;
   ml?: MLDetail;
   fear_greed?: FearGreed;
+  vwap?: { value: number; price_vs_vwap: number; above: boolean };
+  volume_spike?: { detected: boolean; direction: "long" | "short" | "none" };
 }
 
 interface DecompResponse {
@@ -433,6 +435,37 @@ function SymbolRow({ s }: { s: SymbolDecomp }) {
                     <div>P(short): {pct(ml.prob_short)}</div>
                   </div>
                 ) : <div className="text-slate-500">Modelo não carregado</div>}
+              </div>
+            </div>
+
+            {/* VWAP + Volume row */}
+            <div className="grid grid-cols-2 gap-4 mt-3 text-xs">
+              <div>
+                <div className="text-slate-400 font-medium mb-1">VWAP (50 velas)</div>
+                {s.vwap ? (
+                  <div className="space-y-0.5 text-slate-300">
+                    <div>Valor: ${s.vwap.value.toLocaleString(undefined, { maximumFractionDigits: 4 })}</div>
+                    <div>
+                      Preço vs VWAP:{" "}
+                      <span className={s.vwap.above ? "text-emerald-400" : "text-red-400"}>
+                        {s.vwap.price_vs_vwap >= 0 ? "+" : ""}{s.vwap.price_vs_vwap.toFixed(3)}%{" "}
+                        ({s.vwap.above ? "acima ↑" : "abaixo ↓"})
+                      </span>
+                    </div>
+                  </div>
+                ) : <div className="text-slate-500">—</div>}
+              </div>
+              <div>
+                <div className="text-slate-400 font-medium mb-1">Volume Spike (&gt;1.5× média)</div>
+                {s.volume_spike ? (
+                  <div className="text-slate-300">
+                    {s.volume_spike.detected ? (
+                      <span className={s.volume_spike.direction === "long" ? "text-emerald-400" : s.volume_spike.direction === "short" ? "text-red-400" : "text-slate-400"}>
+                        Spike detectado — {s.volume_spike.direction === "long" ? "bullish ↑" : s.volume_spike.direction === "short" ? "bearish ↓" : "sem direção"}
+                      </span>
+                    ) : <span className="text-slate-500">Sem spike</span>}
+                  </div>
+                ) : <div className="text-slate-500">—</div>}
               </div>
             </div>
 
