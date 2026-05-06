@@ -1,0 +1,13 @@
+.score-bar-zero { left: var(--zero-pct); }
+.score-bar-thresh-pos { left: var(--thresh-pos); }
+.score-bar-thresh-neg { left: var(--neg-thresh-pos); }
+.score-bar-fill {
+  left: var(--fill-left);
+  width: var(--fill-width);
+  background-color: var(--fill-color);
+}
+.score-bar-cursor { left: var(--cursor-left); }
+
+.prob-bar-short { width: var(--w-short); background: #ef4444; }
+.prob-bar-flat  { width: var(--w-flat);  background: #6b7280; }
+.prob-bar-long  { width: var(--w-long);  background: #10b981; }

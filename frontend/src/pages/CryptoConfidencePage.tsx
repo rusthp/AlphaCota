@@ -9,7 +9,8 @@
  * Auto-refreshes every 60 s (candle TTL).
  */
 
-import { useState } from "react";
+import { useState, useRef, useLayoutEffect } from "react";
+import "./CryptoConfidencePage.css";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -154,57 +155,65 @@ function translateSkipReason(reason: string): string {
 function ScoreBar({
   value, min = -1, max = 1, threshold,
 }: { value: number; min?: number; max?: number; threshold?: number }) {
-  const range = max - min;
-  const pctPos = ((value - min) / range) * 100;
-  const zeroPct = ((-min) / range) * 100;
-  const threshPos = threshold != null ? (((threshold) - min) / range) * 100 : null;
-  const negThreshPos = threshold != null ? (((-threshold) - min) / range) * 100 : null;
+  const ref = useRef<HTMLDivElement>(null);
 
-  const barColor =
-    value > (threshold ?? 0.63) ? "#10b981" :
-    value < -(threshold ?? 0.63) ? "#ef4444" :
-    "#6b7280";
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const range = max - min;
+    const pctPos = ((value - min) / range) * 100;
+    const zeroPct = ((-min) / range) * 100;
+    const threshPos = threshold != null ? ((threshold - min) / range) * 100 : null;
+    const negThreshPos = threshold != null ? ((-threshold - min) / range) * 100 : null;
+    const barColor =
+      value > (threshold ?? 0.63) ? "#10b981" :
+      value < -(threshold ?? 0.63) ? "#ef4444" :
+      "#6b7280";
+    const fillLeft = value >= 0 ? `${zeroPct}%` : `${pctPos}%`;
+    const fillWidth = `${Math.abs(pctPos - zeroPct)}%`;
+    el.style.setProperty("--zero-pct", `${zeroPct}%`);
+    el.style.setProperty("--thresh-pos", threshPos != null ? `${threshPos}%` : "0%");
+    el.style.setProperty("--neg-thresh-pos", negThreshPos != null ? `${negThreshPos}%` : "0%");
+    el.style.setProperty("--fill-left", fillLeft);
+    el.style.setProperty("--fill-width", fillWidth);
+    el.style.setProperty("--fill-color", barColor);
+    el.style.setProperty("--cursor-left", `${pctPos}%`);
+  });
+
+  const threshPos = threshold != null ? ((threshold - min) / (max - min)) * 100 : null;
+  const negThreshPos = threshold != null ? ((-threshold - min) / (max - min)) * 100 : null;
 
   return (
-    <div className="relative h-3 bg-slate-700 rounded w-full overflow-hidden">
-      {/* zero line */}
-      <div
-        className="absolute top-0 bottom-0 w-px bg-slate-400"
-        style={{ left: `${zeroPct}%` }}
-      />
-      {/* threshold markers */}
+    <div ref={ref} className="relative h-3 bg-slate-700 rounded w-full overflow-hidden score-bar-root">
+      <div className="absolute top-0 bottom-0 w-px bg-slate-400 score-bar-zero" />
       {threshPos != null && (
-        <div className="absolute top-0 bottom-0 w-px bg-yellow-400 opacity-60"
-          style={{ left: `${threshPos}%` }} />
+        <div className="absolute top-0 bottom-0 w-px bg-yellow-400 opacity-60 score-bar-thresh-pos" />
       )}
       {negThreshPos != null && (
-        <div className="absolute top-0 bottom-0 w-px bg-yellow-400 opacity-60"
-          style={{ left: `${negThreshPos}%` }} />
+        <div className="absolute top-0 bottom-0 w-px bg-yellow-400 opacity-60 score-bar-thresh-neg" />
       )}
-      {/* fill from zero to value */}
-      <div
-        className="absolute top-0 bottom-0"
-        style={{
-          left: value >= 0 ? `${zeroPct}%` : `${pctPos}%`,
-          width: `${Math.abs(pctPos - zeroPct)}%`,
-          backgroundColor: barColor,
-        }}
-      />
-      {/* cursor */}
-      <div
-        className="absolute top-0 bottom-0 w-0.5 bg-white"
-        style={{ left: `${pctPos}%` }}
-      />
+      <div className="absolute top-0 bottom-0 score-bar-fill" />
+      <div className="absolute top-0 bottom-0 w-0.5 bg-white score-bar-cursor" />
     </div>
   );
 }
 
 function ProbBar({ pLong, pFlat, pShort }: { pLong: number; pFlat: number; pShort: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.setProperty("--w-short", pct(pShort));
+    el.style.setProperty("--w-flat", pct(pFlat));
+    el.style.setProperty("--w-long", pct(pLong));
+  });
+
   return (
-    <div className="flex h-2 rounded overflow-hidden w-full">
-      <div style={{ width: pct(pShort), background: "#ef4444" }} />
-      <div style={{ width: pct(pFlat), background: "#6b7280" }} />
-      <div style={{ width: pct(pLong), background: "#10b981" }} />
+    <div ref={ref} className="flex h-2 rounded overflow-hidden w-full">
+      <div className="prob-bar-short" />
+      <div className="prob-bar-flat" />
+      <div className="prob-bar-long" />
     </div>
   );
 }
