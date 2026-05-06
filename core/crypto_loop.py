@@ -25,6 +25,7 @@ this loop logs an error and takes no exchange actions for that cycle.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import os
 import signal
 import time
@@ -64,9 +65,12 @@ from core.crypto_ledger import (
     get_symbol_win_rate,
     write_pnl_snapshot,
 )
+from core.crypto_market_context_engine import fetch_market_context
 from core.crypto_news_engine import fetch_news, score_news_sentiment
+from core.crypto_onchain_engine import fetch_onchain_signals
 from core.crypto_risk_engine import (
     check_risk_limits,
+    compute_trailing_sl,
     should_exit_position,
     validate_signal_risk,
 )
@@ -185,6 +189,23 @@ def _monitor_and_exit_positions(
                 timestamp=time.time(),
             )
 
+        # Trailing stop: advance SL toward current price, never widen it.
+        new_sl = compute_trailing_sl(pos, price)
+        if new_sl != pos.stop_loss:
+            try:
+                conn.execute(  # type: ignore[union-attr]
+                    "UPDATE crypto_positions SET stop_loss = ? WHERE id = ?",
+                    (new_sl, pos.id),
+                )
+                conn.commit()  # type: ignore[union-attr]
+                logger.info(
+                    "monitor: %s trailing SL moved %.6f → %.6f (price=%.6f)",
+                    pos.symbol, pos.stop_loss, new_sl, price,
+                )
+                pos = dataclasses.replace(pos, stop_loss=new_sl)
+            except Exception as exc:
+                logger.warning("monitor: trailing SL update failed for %s: %s", pos.symbol, exc)
+
         should_exit, reason = should_exit_position(pos, price, sig)
         if should_exit:
             try:
@@ -253,6 +274,20 @@ def _process_symbol(
         obi = 0.0
 
     news_score = score_news_sentiment(news_cache, symbol)
+
+    onchain_score = 0.0
+    try:
+        onchain_sig = fetch_onchain_signals(symbol)
+        if onchain_sig.available:
+            onchain_score = onchain_sig.aggregate
+            logger.debug(
+                "process: %s onchain agg=%.3f (funding=%.3f oi=%.3f ls=%.3f)",
+                symbol, onchain_score,
+                onchain_sig.funding_score, onchain_sig.oi_score, onchain_sig.ls_score,
+            )
+    except Exception as exc:
+        logger.debug("process: onchain(%s) failed: %s — using 0.0", symbol, exc)
+
     cfg = bot_config or {}
 
     # Adaptive SL/TP multipliers — computed from recent win rate.
@@ -275,6 +310,7 @@ def _process_symbol(
         sl_mult=adap_sl,
         tp_mult=adap_tp,
         htf_candles=htf_candles,
+        onchain_score=onchain_score,
     )
 
     if signal_obj.direction != "flat":
@@ -291,7 +327,17 @@ def _process_symbol(
 
     if _ML_AVAILABLE:
         try:
-            ml_sig = _ml_get_confidence(symbol, _CANDLE_INTERVAL)
+            import pandas as pd
+            candles_df = pd.DataFrame([
+                {
+                    "open": c.open, "high": c.high, "low": c.low,
+                    "close": c.close, "volume": c.volume,
+                    "symbol": c.symbol,
+                    "open_time": int(c.timestamp * 1000),
+                }
+                for c in candles
+            ])
+            ml_sig = _ml_get_confidence(symbol, _CANDLE_INTERVAL, df=candles_df)
             if ml_sig.direction != signal_obj.direction:
                 logger.info(
                     "process: %s ML disagrees (tech=%s ml=%s conf=%.2f) — skipping",
@@ -330,6 +376,14 @@ def _process_symbol(
     if size_usd <= 0.0:
         logger.info("process: %s sized to 0 — skipping", symbol)
         return (signal_obj, last_price, False)
+
+    # Apply Fear & Greed size multiplier (1.2 in Extreme Fear, 0.7 in Extreme Greed).
+    fg_mult = float(cfg.get("fg_size_multiplier", 1.0))
+    if fg_mult != 1.0:
+        size_usd = round(min(size_usd * fg_mult, balance_usd, 100.0), 2)
+        if size_usd < 10.0:
+            logger.info("process: %s F&G-adjusted size below $10 — skipping", symbol)
+            return (signal_obj, last_price, False)
 
     if mode == "paper":
         try:
@@ -437,8 +491,27 @@ def run_loop(mode: str = "paper", max_iterations: int = 0) -> None:
                     logger.warning("run_loop: fetch_news failed: %s", exc)
                     news_cache = []
 
+                # Market context: Fear & Greed + news-driven pair discovery.
+                market_ctx = fetch_market_context(
+                    news_items=news_cache,
+                    known_symbols=set(symbols),
+                )
+                if market_ctx.trending_pairs:
+                    symbols = symbols + market_ctx.trending_pairs
+                    logger.info(
+                        "run_loop: expanded watchlist with %d trending pair(s): %s",
+                        len(market_ctx.trending_pairs),
+                        ", ".join(market_ctx.trending_pairs),
+                    )
+                logger.info(
+                    "run_loop: F&G=%d (%s) size_mult=%.2f",
+                    market_ctx.fg_value, market_ctx.fg_label, market_ctx.size_multiplier,
+                )
+
                 balance_usd = get_balance_estimate(conn, _INITIAL_BALANCE, mode)
                 bot_config = _load_bot_config()
+                # Embed F&G size multiplier into bot_config so _process_symbol can apply it.
+                bot_config["fg_size_multiplier"] = market_ctx.size_multiplier
 
                 # Build set of symbols that already have an open position so
                 # _process_symbol never opens a second position for the same pair.

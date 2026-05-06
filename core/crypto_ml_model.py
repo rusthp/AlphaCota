@@ -98,6 +98,19 @@ def _lgbm_params() -> dict:
     }
 
 
+def _lgbm_finetune_params() -> dict:
+    """Params for incremental fine-tuning on real-trade feedback.
+
+    Fewer trees + lower LR to avoid overfitting a small feedback dataset.
+    Used with init_model=<base_clf> so trees are ADDED to the base model,
+    not trained from scratch.
+    """
+    base = _lgbm_params()
+    base["n_estimators"] = 50
+    base["learning_rate"] = 0.01
+    return base
+
+
 def train(
     symbols: list[str] | None = None,
     interval: str = "15m",
@@ -306,23 +319,28 @@ def get_confidence(
     interval: str = "15m",
     model_dir: str | Path = _DEFAULT_MODEL_DIR,
     candles_needed: int = 200,
+    df: "pd.DataFrame | None" = None,
 ) -> MLSignal:
-    """Convenience: load model + fetch live candles + predict in one call.
+    """Convenience: load model + (optionally fetch) live candles + predict.
 
     Args:
         symbol: e.g. "BTCUSDT"
         interval: Kline interval.
         model_dir: Directory containing the trained model.
-        candles_needed: How many recent candles to fetch (default 200).
+        candles_needed: How many recent candles to fetch (if df is None).
+        df: Pre-built OHLCV DataFrame. When provided, skips the Binance fetch,
+            saving one HTTP round-trip per symbol per tick.
 
     Returns:
         MLSignal with current market confidence.
     """
-    from core.crypto_data_collector import download_pair
-
     model = load_model(model_dir)
-    df = download_pair(symbol, interval, days=candles_needed // 96 + 2)
-    if df.empty:
+
+    if df is None or df.empty:
+        from core.crypto_data_collector import download_pair
+        df = download_pair(symbol, interval, days=candles_needed // 96 + 2)
+
+    if df is None or df.empty:
         return MLSignal(symbol, "flat", 0.0, 0.0, 1.0, 0.0, time.time())
 
     return predict(model, df.tail(candles_needed))
@@ -524,11 +542,16 @@ def train_from_trades(
             trained_at=now,
         )
 
-    # --- Train final feedback model on all samples -------------------------
-    clf_fb = LGBMClassifier(**_lgbm_params())
-    clf_fb.fit(X_fb, y_enc)
+    # --- Incremental fine-tune: ADD trees on top of base, never replace ----
+    # Using init_model keeps the 29k-row base intact and appends 50 feedback
+    # trees calibrated to real closed-trade outcomes (tp_hit / sl_hit).
+    # Training from scratch on ~50 rows (old behaviour) destroyed accuracy.
+    clf_fb = LGBMClassifier(**_lgbm_finetune_params())
+    if base_model is not None:
+        clf_fb.fit(X_fb, y_enc, init_model=base_model.clf)
+    else:
+        clf_fb.fit(X_fb, y_enc)
 
-    # Persist updated model (replaces base if no base existed, else wraps it).
     feature_names = list(X_fb.columns)
     symbols_list = list(symbols_seen)
     if base_model is not None:
