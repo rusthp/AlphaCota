@@ -1,0 +1,16 @@
+.pm-chart-label {
+  color: var(--pm-color);
+}
+
+.pm-outcome-badge {
+  background-color: var(--pm-bg-color);
+  color: var(--pm-color);
+}
+
+.pm-predicted-bar {
+  width: var(--pm-width, 0%);
+}
+
+.pm-actual-bar {
+  width: var(--pm-width, 0%);
+}
