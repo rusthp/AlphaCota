@@ -225,26 +225,26 @@ def calculate_fii_score(data: dict[str, float]) -> dict[str, float]:
         dict com fundamentos, rendimento, risco, liquidez (cada 0–25) e total (0–100).
     """
     # --- Fundamentos (max 25): P/VP (15pts) + endividamento (10pts) ---
-    pvp = float(data.get("pvp", 1.0))
-    debt_ratio = float(data.get("debt_ratio", 0.3))
+    pvp = data.get("pvp") or 1.0
+    debt_ratio = data.get("debt_ratio") or 0.3
     score_pvp = normalize_inverse(pvp, 0.5, 1.5) * 15.0
     score_debt = normalize_inverse(debt_ratio, 0.0, 0.8) * 10.0
     fundamentos = round(min(25.0, score_pvp + score_debt), 2)
 
     # --- Rendimento (max 25): DY (15pts) + consistência (10pts) ---
-    dy = float(data.get("dividend_yield", 0.08))
-    consistency = min(1.0, max(0.0, float(data.get("dividend_consistency", 0.5))))
+    dy = data.get("dividend_yield") or 0.08
+    consistency = min(1.0, max(0.0, data.get("dividend_consistency") or 0.5))
     score_dy = normalize_positive(dy, 0.04, 0.13) * 15.0
     score_consistency = consistency * 10.0
     rendimento = round(min(25.0, score_dy + score_consistency), 2)
 
     # --- Risco (max 25): vacância ---
-    vacancy = float(data.get("vacancy_rate", data.get("vacancia", 0.1)))
+    vacancy = data.get("vacancy_rate") or data.get("vacancia") or 0.1
     score_vacancy = normalize_inverse(vacancy, 0.0, 0.30) * 25.0
     risco = round(min(25.0, score_vacancy), 2)
 
     # --- Liquidez (max 25): liquidez diária ---
-    liquidity = float(data.get("daily_liquidity", data.get("liquidez_diaria", 500_000)))
+    liquidity = data.get("daily_liquidity") or data.get("liquidez_diaria") or 500_000
     score_liquidity = normalize_positive(liquidity, 100_000, 5_000_000) * 25.0
     liquidez = round(min(25.0, score_liquidity), 2)
 

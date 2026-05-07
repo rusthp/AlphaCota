@@ -218,17 +218,17 @@ def scanner(
         ticker = fii["ticker"]
         fund = fundamentals.get(ticker, {})
 
-        # Evaluate quant score
-        eval_data = {
-            "dividend_yield": fund.get("dividend_yield", 0.08),
-            "pvp": fund.get("pvp", 1.0),
-            "vacancia": fund.get("vacancia", 0.05),
-            "liquidez_diaria": fund.get("liquidez_diaria", 5000000),
-        }
-
+        # FII-specific score (4 dimensions: fundamentos, rendimento, risco, liquidez)
         try:
-            evaluation = evaluate_company(ticker, eval_data)
-            score = evaluation.get("final_score", evaluation.get("score_final", 0))
+            fii_score = calculate_fii_score({
+                "pvp": fund.get("pvp") or 1.0,
+                "debt_ratio": fund.get("debt_ratio") or 0.3,
+                "dividend_yield": fund.get("dividend_yield") or 0.08,
+                "dividend_consistency": fund.get("dividend_consistency") or 0.5,
+                "vacancy_rate": fund.get("vacancia") or 0.05,
+                "daily_liquidity": fund.get("liquidez_diaria") or 500_000,
+            })
+            score = fii_score["total"]
         except Exception:
             score = 0
 
@@ -355,7 +355,7 @@ def _build_dividend_history(ticker: str, fe_data: Optional[dict], months: int = 
         # deduplicate (keep last per month)
         by_month: dict[str, float] = {}
         for item in result:
-            by_month[item["month"]] = item["value"]
+            by_month[str(item["month"])] = float(item["value"])
         return [{"month": m, "value": v} for m, v in sorted(by_month.items())[-months:]]
     except Exception:
         pass
@@ -845,7 +845,7 @@ def monte_carlo(req: MonteCarloRequest):
         volatilities=vols,
         meses=req.meses,
         simulacoes=req.simulacoes,
-        override_initial_capital=req.override_initial_capital,
+        override_initial_capital=req.override_initial_capital or 0.0,
     )
     return result
 
@@ -2559,7 +2559,7 @@ def crypto_signal_decomposition_endpoint(interval: str = "15m"):
         "size_multiplier": market_ctx.size_multiplier,
     }
 
-    results = []
+    results: list[dict] = []
     for symbol in _CRYPTO_PAIRS:
         try:
             candles = fetch_candles(symbol, interval, 100)
@@ -2635,7 +2635,7 @@ def crypto_signal_decomposition_endpoint(interval: str = "15m"):
                 decomp["would_enter"]
                 and (not ml["available"] or (
                     ml["direction"] == decomp["decision"]
-                    and ml["confidence"] >= 0.55
+                    and float(ml["confidence"]) >= 0.55
                 ))
             )
             if decomp["would_enter"] and ml["available"] and ml["direction"] != decomp["decision"]:
@@ -2652,6 +2652,33 @@ def crypto_signal_decomposition_endpoint(interval: str = "15m"):
 
     results.sort(key=lambda r: (0 if r.get("would_enter") else 1, -abs(r.get("combined", 0.0))))
     return {"interval": interval, "fear_greed": fg, "symbols": results, "timestamp": _time.time()}
+
+
+@app.get("/api/crypto/orderbook/{symbol}")
+def crypto_orderbook(symbol: str, limit: int = 15):
+    """Return top N bid/ask levels for a symbol from Binance depth endpoint."""
+    from core.crypto_data_engine import fetch_order_book
+    return fetch_order_book(symbol.upper(), limit=min(limit, 20))
+
+
+@app.get("/api/crypto/news")
+def crypto_news_endpoint(limit: int = 15, symbol: str = ""):
+    """Return recent crypto news, optionally filtered to a specific symbol."""
+    from core.crypto_news_engine import fetch_news
+    currencies = [symbol.replace("USDT", "").upper()] if symbol else None
+    items = fetch_news(currencies=currencies, limit=limit)
+    return {
+        "news": [
+            {
+                "title": n.title,
+                "url": n.url,
+                "source": getattr(n, "source", ""),
+                "published_at": n.published_at,
+            }
+            for n in items
+        ],
+        "count": len(items),
+    }
 
 
 @app.get("/api/crypto/ml/confidence")
@@ -2810,7 +2837,7 @@ def crypto_ml_adaptive_multipliers(mode: str = "paper", window: int = 30):
         wins  = int(row[1]) if row and row[1] else 0
         win_rate = round(wins / total, 4) if total > 0 else None
 
-        if total < 10:
+        if total < 10 or win_rate is None:
             regime = "insufficient_data"
         elif win_rate < 0.40:
             regime = "losing — SL widened, TP tightened"
