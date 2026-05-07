@@ -121,6 +121,15 @@ _SL_MULT_MAX = 3.0
 _TP_MULT_MIN = 2.0
 _TP_MULT_MAX = 5.0
 
+# Per-symbol debug cache: written by generate_signal(), read by the loop
+# immediately after for observability logging.  Keyed by symbol.
+_signal_debug: dict[str, dict] = {}
+
+
+def get_last_signal_debug(symbol: str) -> dict:
+    """Return intermediate values from the most recent generate_signal() call."""
+    return _signal_debug.get(symbol, {})
+
 
 # ---------------------------------------------------------------------------
 # Adaptive SL/TP multipliers (performance feedback)
@@ -694,7 +703,9 @@ def generate_signal(
         )
 
     # --- Regime detection (with hysteresis persistence filter) ---
-    regime = get_confirmed_regime(symbol, detect_market_regime(candles))
+    regime_raw = detect_market_regime(candles)
+    regime = get_confirmed_regime(symbol, regime_raw)
+    regime_persistence = _regime_states.get(symbol, _RegimeState()).candidate_count
     onchain_override_active = (
         regime == "ranging"
         and abs(onchain_score) >= _ONCHAIN_RANGING_OVERRIDE
@@ -708,6 +719,19 @@ def generate_signal(
         rsi_vals = calculate_rsi([c.close for c in candles], 14)
         last_rsi = rsi_vals[-1] if rsi_vals and not math.isnan(rsi_vals[-1]) else 50.0
         if _RANGING_MR_RSI_LOW <= last_rsi <= _RANGING_MR_RSI_HIGH:
+            _signal_debug[symbol] = {
+                "regime_raw": regime_raw, "regime_confirmed": regime,
+                "regime_persistence": regime_persistence,
+                "tech_signed": 0.0, "news_score": news_score, "onchain_score": onchain_score,
+                "btc_strength": btc_strength, "btc_modifier": 1.0,
+                "combined_before_btc": 0.0, "combined_after_btc": 0.0,
+                "threshold": _LONG_THRESHOLD, "threshold_reason": "normal",
+                "htf_trend": "neutral", "htf_alignment": 0,
+                "direction": "flat", "confidence": 0.0,
+                "would_enter": False, "skip_reason": f"ranging_rsi={last_rsi:.1f}_not_extreme",
+                "regime_size_mult": 1.0, "ranging_mean_reversion": False,
+                "entry_price": entry_price, "stop_loss": 0.0, "take_profit": 0.0,
+            }
             return CryptoSignal(
                 symbol=symbol,
                 direction="flat",
@@ -736,6 +760,7 @@ def generate_signal(
         + _WEIGHT_NEWS * clamped_news
     )
     combined = max(-1.0, min(1.0, combined))
+    combined_before_btc = combined
 
     # --- BTC global regime modifier (continuous strength score) ---
     # btc_strength ∈ [-1, 1]: positive = BTC bullish, negative = bearish.
@@ -784,6 +809,27 @@ def generate_signal(
             direction = "flat"
 
     if direction == "flat" or confidence < _MIN_SIGNAL_CONFIDENCE:
+        _htf_alignment = (1 if htf_trend == "bullish" else (-1 if htf_trend == "bearish" else 0))
+        _signal_debug[symbol] = {
+            "regime_raw": regime_raw, "regime_confirmed": regime,
+            "regime_persistence": regime_persistence,
+            "tech_signed": tech_signed, "news_score": clamped_news, "onchain_score": clamped_onchain,
+            "btc_strength": btc_strength, "btc_modifier": btc_factor_applied,
+            "combined_before_btc": combined_before_btc, "combined_after_btc": combined,
+            "threshold": long_thresh, "threshold_reason": (
+                "onchain_override" if onchain_override_active else
+                "ranging_mr" if ranging_mean_reversion else "normal"
+            ),
+            "htf_trend": htf_trend, "htf_alignment": _htf_alignment,
+            "direction": "flat", "confidence": confidence,
+            "would_enter": False, "skip_reason": "below_threshold",
+            "regime_size_mult": (
+                _VOLATILE_SIZE_MULT if regime == "volatile" else
+                _RANGING_MR_SIZE_MULT if ranging_mean_reversion else 1.0
+            ),
+            "ranging_mean_reversion": ranging_mean_reversion,
+            "entry_price": entry_price, "stop_loss": 0.0, "take_profit": 0.0,
+        }
         return CryptoSignal(
             symbol=symbol,
             direction="flat",
@@ -849,6 +895,23 @@ def generate_signal(
     else:
         regime_size_mult = 1.0
 
+    _htf_alignment = (1 if htf_trend == "bullish" else (-1 if htf_trend == "bearish" else 0))
+    _signal_debug[symbol] = {
+        "regime_raw": regime_raw, "regime_confirmed": regime,
+        "regime_persistence": regime_persistence,
+        "tech_signed": tech_signed, "news_score": clamped_news, "onchain_score": clamped_onchain,
+        "btc_strength": btc_strength, "btc_modifier": btc_factor_applied,
+        "combined_before_btc": combined_before_btc, "combined_after_btc": combined,
+        "threshold": long_thresh, "threshold_reason": (
+            "onchain_override" if onchain_override_active else
+            "ranging_mr" if ranging_mean_reversion else "normal"
+        ),
+        "htf_trend": htf_trend, "htf_alignment": _htf_alignment,
+        "direction": direction, "confidence": confidence,
+        "would_enter": True, "skip_reason": None,
+        "regime_size_mult": regime_size_mult, "ranging_mean_reversion": ranging_mean_reversion,
+        "entry_price": entry_price, "stop_loss": stop_loss, "take_profit": take_profit,
+    }
     reason = (
         f"regime={regime} tech_dir={tech_dir} tech_conf={tech_conf:.3f} "
         f"news={clamped_news:.3f} combined={combined:.3f} atr={atr:.6f}"

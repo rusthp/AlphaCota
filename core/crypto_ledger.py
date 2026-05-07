@@ -89,6 +89,66 @@ CREATE TABLE IF NOT EXISTS crypto_pnl_snapshots (
     created_at       REAL NOT NULL,
     UNIQUE (date, mode)
 );
+
+CREATE TABLE IF NOT EXISTS crypto_signal_log (
+    -- Identity
+    event_id              TEXT PRIMARY KEY,
+    timestamp             REAL NOT NULL,
+    symbol                TEXT NOT NULL,
+    mode                  TEXT NOT NULL DEFAULT 'paper',
+
+    -- Regime
+    regime_raw            TEXT NOT NULL DEFAULT 'unknown',
+    regime_confirmed      TEXT NOT NULL DEFAULT 'unknown',
+    regime_persistence    INTEGER NOT NULL DEFAULT 0,
+
+    -- Technical component scores (signed, -1..1)
+    tech_signed           REAL NOT NULL DEFAULT 0.0,
+    rsi_score             REAL NOT NULL DEFAULT 0.0,
+    macd_score            REAL NOT NULL DEFAULT 0.0,
+    vwap_score            REAL NOT NULL DEFAULT 0.0,
+    volume_score          REAL NOT NULL DEFAULT 0.0,
+    news_score            REAL NOT NULL DEFAULT 0.0,
+    onchain_score         REAL NOT NULL DEFAULT 0.0,
+
+    -- BTC context
+    btc_strength          REAL NOT NULL DEFAULT 0.0,
+    btc_modifier          REAL NOT NULL DEFAULT 1.0,
+
+    -- Composite
+    combined_before_btc   REAL NOT NULL DEFAULT 0.0,
+    combined_after_btc    REAL NOT NULL DEFAULT 0.0,
+    threshold             REAL NOT NULL DEFAULT 0.63,
+    threshold_reason      TEXT NOT NULL DEFAULT 'normal',
+
+    -- HTF
+    htf_trend             TEXT NOT NULL DEFAULT 'neutral',
+    htf_alignment         INTEGER NOT NULL DEFAULT 0,  -- 1=aligned, 0=neutral, -1=filtered
+
+    -- Decision
+    direction             TEXT NOT NULL DEFAULT 'flat',
+    confidence            REAL NOT NULL DEFAULT 0.0,
+    would_enter           INTEGER NOT NULL DEFAULT 0,
+    skip_reason           TEXT,
+
+    -- Risk
+    regime_size_mult      REAL NOT NULL DEFAULT 1.0,
+    kelly_fraction        REAL NOT NULL DEFAULT 0.0,
+    position_size_usd     REAL NOT NULL DEFAULT 0.0,
+    entry_price           REAL NOT NULL DEFAULT 0.0,
+    stop_loss             REAL NOT NULL DEFAULT 0.0,
+    take_profit           REAL NOT NULL DEFAULT 0.0,
+
+    -- Ranging mean-reversion flag
+    ranging_mean_reversion INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_csl_timestamp        ON crypto_signal_log(timestamp);
+CREATE INDEX IF NOT EXISTS idx_csl_symbol_ts        ON crypto_signal_log(symbol, timestamp);
+CREATE INDEX IF NOT EXISTS idx_csl_regime_ts        ON crypto_signal_log(regime_confirmed, timestamp);
+CREATE INDEX IF NOT EXISTS idx_csl_decision_ts      ON crypto_signal_log(direction, timestamp);
+CREATE INDEX IF NOT EXISTS idx_csl_would_enter_ts   ON crypto_signal_log(would_enter, timestamp);
+CREATE INDEX IF NOT EXISTS idx_csl_btc_strength     ON crypto_signal_log(btc_strength);
 """
 
 
@@ -99,7 +159,54 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.commit()
         logger.info("crypto_ledger: migrated — added crypto_orders.binance_order_id")
     except sqlite3.OperationalError:
-        pass  # column already exists — safe to ignore
+        pass
+
+    # crypto_signal_log was added in v2 — safe no-op if already exists.
+    try:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS crypto_signal_log (
+                event_id TEXT PRIMARY KEY, timestamp REAL NOT NULL,
+                symbol TEXT NOT NULL, mode TEXT NOT NULL DEFAULT 'paper',
+                regime_raw TEXT NOT NULL DEFAULT 'unknown',
+                regime_confirmed TEXT NOT NULL DEFAULT 'unknown',
+                regime_persistence INTEGER NOT NULL DEFAULT 0,
+                tech_signed REAL NOT NULL DEFAULT 0.0,
+                rsi_score REAL NOT NULL DEFAULT 0.0,
+                macd_score REAL NOT NULL DEFAULT 0.0,
+                vwap_score REAL NOT NULL DEFAULT 0.0,
+                volume_score REAL NOT NULL DEFAULT 0.0,
+                news_score REAL NOT NULL DEFAULT 0.0,
+                onchain_score REAL NOT NULL DEFAULT 0.0,
+                btc_strength REAL NOT NULL DEFAULT 0.0,
+                btc_modifier REAL NOT NULL DEFAULT 1.0,
+                combined_before_btc REAL NOT NULL DEFAULT 0.0,
+                combined_after_btc REAL NOT NULL DEFAULT 0.0,
+                threshold REAL NOT NULL DEFAULT 0.63,
+                threshold_reason TEXT NOT NULL DEFAULT 'normal',
+                htf_trend TEXT NOT NULL DEFAULT 'neutral',
+                htf_alignment INTEGER NOT NULL DEFAULT 0,
+                direction TEXT NOT NULL DEFAULT 'flat',
+                confidence REAL NOT NULL DEFAULT 0.0,
+                would_enter INTEGER NOT NULL DEFAULT 0,
+                skip_reason TEXT,
+                regime_size_mult REAL NOT NULL DEFAULT 1.0,
+                kelly_fraction REAL NOT NULL DEFAULT 0.0,
+                position_size_usd REAL NOT NULL DEFAULT 0.0,
+                entry_price REAL NOT NULL DEFAULT 0.0,
+                stop_loss REAL NOT NULL DEFAULT 0.0,
+                take_profit REAL NOT NULL DEFAULT 0.0,
+                ranging_mean_reversion INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_csl_timestamp      ON crypto_signal_log(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_csl_symbol_ts      ON crypto_signal_log(symbol, timestamp);
+            CREATE INDEX IF NOT EXISTS idx_csl_regime_ts      ON crypto_signal_log(regime_confirmed, timestamp);
+            CREATE INDEX IF NOT EXISTS idx_csl_decision_ts    ON crypto_signal_log(direction, timestamp);
+            CREATE INDEX IF NOT EXISTS idx_csl_would_enter_ts ON crypto_signal_log(would_enter, timestamp);
+            CREATE INDEX IF NOT EXISTS idx_csl_btc_strength   ON crypto_signal_log(btc_strength);
+        """)
+        conn.commit()
+    except sqlite3.OperationalError as exc:
+        logger.debug("crypto_ledger: signal_log migration: %s", exc)
 
 
 _schema_logged = False
@@ -421,3 +528,309 @@ def get_symbol_win_rate(
 
     wins = int(row["wins"]) if row and row["wins"] else 0
     return round(wins / total, 4)
+
+
+# ---------------------------------------------------------------------------
+# Signal decision log
+# ---------------------------------------------------------------------------
+
+def insert_signal_log(conn: sqlite3.Connection, entry: dict) -> None:
+    """Persist one signal decision log row.
+
+    Silently drops on error — observability must never crash the trading loop.
+
+    Args:
+        conn: Open sqlite3 connection.
+        entry: Dict produced by the loop's _build_signal_log() helper.
+    """
+    try:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO crypto_signal_log (
+                event_id, timestamp, symbol, mode,
+                regime_raw, regime_confirmed, regime_persistence,
+                tech_signed, rsi_score, macd_score, vwap_score, volume_score,
+                news_score, onchain_score,
+                btc_strength, btc_modifier,
+                combined_before_btc, combined_after_btc,
+                threshold, threshold_reason,
+                htf_trend, htf_alignment,
+                direction, confidence, would_enter, skip_reason,
+                regime_size_mult, kelly_fraction, position_size_usd,
+                entry_price, stop_loss, take_profit,
+                ranging_mean_reversion
+            ) VALUES (
+                :event_id, :timestamp, :symbol, :mode,
+                :regime_raw, :regime_confirmed, :regime_persistence,
+                :tech_signed, :rsi_score, :macd_score, :vwap_score, :volume_score,
+                :news_score, :onchain_score,
+                :btc_strength, :btc_modifier,
+                :combined_before_btc, :combined_after_btc,
+                :threshold, :threshold_reason,
+                :htf_trend, :htf_alignment,
+                :direction, :confidence, :would_enter, :skip_reason,
+                :regime_size_mult, :kelly_fraction, :position_size_usd,
+                :entry_price, :stop_loss, :take_profit,
+                :ranging_mean_reversion
+            )
+            """,
+            entry,
+        )
+        conn.commit()
+    except sqlite3.Error as exc:
+        logger.warning("insert_signal_log: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Analytics queries
+# ---------------------------------------------------------------------------
+
+def analytics_regimes(
+    conn: sqlite3.Connection,
+    mode: str = "paper",
+    days: int = 30,
+) -> list[dict]:
+    """Win rate and PnL breakdown by confirmed regime.
+
+    Joins signal_log decisions with closed trades to compute per-regime stats.
+    Trades are matched to signal decisions on (symbol, mode) within ±5 minutes.
+    """
+    cutoff = time.time() - days * 86_400
+    try:
+        rows = conn.execute(
+            """
+            WITH decided AS (
+                SELECT regime_confirmed, direction, would_enter,
+                       entry_price, symbol, timestamp AS sig_ts
+                  FROM crypto_signal_log
+                 WHERE mode = ? AND timestamp >= ?
+                   AND would_enter = 1
+            ),
+            matched AS (
+                SELECT d.regime_confirmed,
+                       t.realized_pnl,
+                       CASE WHEN t.realized_pnl > 0 THEN 1 ELSE 0 END AS win
+                  FROM decided d
+                  JOIN crypto_trades t
+                    ON t.symbol = d.symbol
+                   AND t.mode   = ?
+                   AND t.opened_at BETWEEN d.sig_ts - 300 AND d.sig_ts + 300
+            )
+            SELECT
+                regime_confirmed                     AS regime,
+                COUNT(*)                             AS signals,
+                SUM(would_enter)                     AS entries,
+                0                                   AS trades,
+                0.0                                 AS winrate,
+                0.0                                 AS avg_pnl
+            FROM crypto_signal_log
+            WHERE mode = ? AND timestamp >= ?
+            GROUP BY regime_confirmed
+            """,
+            (mode, cutoff, mode, mode, cutoff),
+        ).fetchall()
+        # Separate query for trade outcomes joined by timing
+        trade_rows = conn.execute(
+            """
+            SELECT
+                sl.regime_confirmed                  AS regime,
+                COUNT(t.id)                          AS trades,
+                COALESCE(AVG(CASE WHEN t.realized_pnl > 0 THEN 1.0 ELSE 0.0 END), 0) AS winrate,
+                COALESCE(AVG(t.realized_pnl), 0)     AS avg_pnl,
+                COALESCE(SUM(t.realized_pnl), 0)     AS total_pnl
+              FROM crypto_signal_log sl
+              JOIN crypto_trades t
+                ON t.symbol   = sl.symbol
+               AND t.mode     = sl.mode
+               AND t.opened_at BETWEEN sl.timestamp - 300 AND sl.timestamp + 300
+             WHERE sl.mode = ? AND sl.timestamp >= ? AND sl.would_enter = 1
+             GROUP BY sl.regime_confirmed
+            """,
+            (mode, cutoff),
+        ).fetchall()
+
+        trade_by_regime: dict[str, dict] = {
+            r["regime"]: {
+                "trades": int(r["trades"]),
+                "winrate": round(float(r["winrate"]), 4),
+                "avg_pnl": round(float(r["avg_pnl"]), 4),
+                "total_pnl": round(float(r["total_pnl"]), 4),
+            }
+            for r in trade_rows
+        }
+
+        result = []
+        for row in rows:
+            regime = row["regime"]
+            td = trade_by_regime.get(regime, {"trades": 0, "winrate": 0.0, "avg_pnl": 0.0, "total_pnl": 0.0})
+            result.append({
+                "regime": regime,
+                "signals": int(row["signals"]),
+                "entries": int(row["entries"]),
+                **td,
+            })
+        return result
+    except sqlite3.Error as exc:
+        logger.warning("analytics_regimes: %s", exc)
+        return []
+
+
+def analytics_btc(
+    conn: sqlite3.Connection,
+    mode: str = "paper",
+    days: int = 30,
+) -> list[dict]:
+    """Signal and trade distribution bucketed by btc_strength."""
+    cutoff = time.time() - days * 86_400
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                CASE
+                    WHEN btc_strength <= -0.6 THEN 'very_bearish'
+                    WHEN btc_strength <= -0.2 THEN 'bearish'
+                    WHEN btc_strength <   0.2 THEN 'neutral'
+                    WHEN btc_strength <   0.6 THEN 'bullish'
+                    ELSE 'very_bullish'
+                END                             AS bucket,
+                COUNT(*)                        AS signals,
+                SUM(would_enter)                AS entries,
+                AVG(btc_modifier)               AS avg_modifier,
+                AVG(combined_after_btc)         AS avg_combined,
+                AVG(combined_before_btc)        AS avg_combined_pre
+              FROM crypto_signal_log
+             WHERE mode = ? AND timestamp >= ?
+             GROUP BY bucket
+             ORDER BY MIN(btc_strength)
+            """,
+            (mode, cutoff),
+        ).fetchall()
+        return [
+            {
+                "bucket": r["bucket"],
+                "signals": int(r["signals"]),
+                "entries": int(r["entries"]),
+                "avg_modifier": round(float(r["avg_modifier"]), 4),
+                "avg_combined": round(float(r["avg_combined"]), 4),
+                "avg_combined_pre": round(float(r["avg_combined_pre"]), 4),
+            }
+            for r in rows
+        ]
+    except sqlite3.Error as exc:
+        logger.warning("analytics_btc: %s", exc)
+        return []
+
+
+def analytics_signals(
+    conn: sqlite3.Connection,
+    mode: str = "paper",
+    days: int = 30,
+) -> list[dict]:
+    """Combined score distribution and threshold calibration by bucket."""
+    cutoff = time.time() - days * 86_400
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                ROUND(combined_after_btc * 20) / 20  AS bucket_center,
+                COUNT(*)                              AS count,
+                SUM(would_enter)                      AS entries,
+                AVG(confidence)                       AS avg_confidence,
+                direction
+              FROM crypto_signal_log
+             WHERE mode = ? AND timestamp >= ?
+               AND direction != 'flat'
+             GROUP BY bucket_center, direction
+             ORDER BY bucket_center
+            """,
+            (mode, cutoff),
+        ).fetchall()
+        return [
+            {
+                "bucket_center": round(float(r["bucket_center"]), 2),
+                "direction": r["direction"],
+                "count": int(r["count"]),
+                "entries": int(r["entries"]),
+                "avg_confidence": round(float(r["avg_confidence"]), 4),
+            }
+            for r in rows
+        ]
+    except sqlite3.Error as exc:
+        logger.warning("analytics_signals: %s", exc)
+        return []
+
+
+def analytics_skips(
+    conn: sqlite3.Connection,
+    mode: str = "paper",
+    days: int = 30,
+) -> list[dict]:
+    """Frequency and context of skip_reason values."""
+    cutoff = time.time() - days * 86_400
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                COALESCE(skip_reason, 'entered')        AS reason,
+                COUNT(*)                                AS count,
+                AVG(combined_after_btc)                 AS avg_combined,
+                AVG(btc_strength)                       AS avg_btc_strength
+              FROM crypto_signal_log
+             WHERE mode = ? AND timestamp >= ?
+             GROUP BY reason
+             ORDER BY count DESC
+            """,
+            (mode, cutoff),
+        ).fetchall()
+        return [
+            {
+                "reason": r["reason"],
+                "count": int(r["count"]),
+                "avg_combined": round(float(r["avg_combined"]), 4),
+                "avg_btc_strength": round(float(r["avg_btc_strength"]), 4),
+            }
+            for r in rows
+        ]
+    except sqlite3.Error as exc:
+        logger.warning("analytics_skips: %s", exc)
+        return []
+
+
+def analytics_calibration(
+    conn: sqlite3.Connection,
+    mode: str = "paper",
+    days: int = 30,
+) -> list[dict]:
+    """Confidence calibration: combined score bucket vs realised winrate."""
+    cutoff = time.time() - days * 86_400
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                ROUND(sl.combined_after_btc / 0.05) * 0.05  AS bucket,
+                COUNT(t.id)                                   AS trades,
+                COALESCE(AVG(CASE WHEN t.realized_pnl > 0 THEN 1.0 ELSE 0.0 END), 0) AS winrate,
+                COALESCE(AVG(t.realized_pnl), 0)              AS avg_pnl
+              FROM crypto_signal_log sl
+              JOIN crypto_trades t
+                ON t.symbol   = sl.symbol
+               AND t.mode     = sl.mode
+               AND t.opened_at BETWEEN sl.timestamp - 300 AND sl.timestamp + 300
+             WHERE sl.mode = ? AND sl.timestamp >= ? AND sl.would_enter = 1
+             GROUP BY bucket
+             ORDER BY bucket
+            """,
+            (mode, cutoff),
+        ).fetchall()
+        return [
+            {
+                "combined_bucket": round(float(r["bucket"]), 2),
+                "trades": int(r["trades"]),
+                "winrate": round(float(r["winrate"]), 4),
+                "avg_pnl": round(float(r["avg_pnl"]), 4),
+            }
+            for r in rows
+        ]
+    except sqlite3.Error as exc:
+        logger.warning("analytics_calibration: %s", exc)
+        return []

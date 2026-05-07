@@ -3063,3 +3063,72 @@ def crypto_ml_adaptive_multipliers(mode: str = "paper", window: int = 30):
             conn.close()
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Analytics endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/crypto/analytics/regimes")
+def crypto_analytics_regimes(mode: str = "paper", days: int = 30):
+    """Win rate and PnL by confirmed regime, joined with closed trades."""
+    from core.crypto_ledger import analytics_regimes, connect_default
+    conn = connect_default()
+    try:
+        return {"mode": mode, "days": days, "data": analytics_regimes(conn, mode, days)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        conn.close()
+
+
+@app.get("/api/crypto/analytics/btc")
+def crypto_analytics_btc(mode: str = "paper", days: int = 30):
+    """Signal and entry distribution bucketed by btc_strength score."""
+    from core.crypto_ledger import analytics_btc, connect_default
+    conn = connect_default()
+    try:
+        return {"mode": mode, "days": days, "data": analytics_btc(conn, mode, days)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        conn.close()
+
+
+@app.get("/api/crypto/analytics/signals")
+def crypto_analytics_signals(mode: str = "paper", days: int = 30):
+    """Combined score distribution bucketed in 0.05 increments."""
+    from core.crypto_ledger import analytics_signals, connect_default
+    conn = connect_default()
+    try:
+        return {"mode": mode, "days": days, "data": analytics_signals(conn, mode, days)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        conn.close()
+
+
+@app.get("/api/crypto/analytics/skips")
+def crypto_analytics_skips(mode: str = "paper", days: int = 30):
+    """Skip reason frequency with average combined score and btc_strength."""
+    from core.crypto_ledger import analytics_skips, connect_default
+    conn = connect_default()
+    try:
+        return {"mode": mode, "days": days, "data": analytics_skips(conn, mode, days)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        conn.close()
+
+
+@app.get("/api/crypto/analytics/calibration")
+def crypto_analytics_calibration(mode: str = "paper", days: int = 30):
+    """Confidence calibration: combined score bucket vs realised win rate."""
+    from core.crypto_ledger import analytics_calibration, connect_default
+    conn = connect_default()
+    try:
+        return {"mode": mode, "days": days, "data": analytics_calibration(conn, mode, days)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        conn.close()

@@ -29,6 +29,7 @@ import dataclasses
 import os
 import signal
 import time
+import uuid
 from pathlib import Path
 from types import FrameType
 
@@ -63,6 +64,7 @@ from core.crypto_ledger import (
     get_daily_pnl,
     get_open_positions,
     get_symbol_win_rate,
+    insert_signal_log,
     write_pnl_snapshot,
 )
 from core.crypto_market_context_engine import fetch_market_context
@@ -74,7 +76,7 @@ from core.crypto_risk_engine import (
     should_exit_position,
     validate_signal_risk,
 )
-from core.crypto_signal_engine import compute_btc_strength, generate_signal, get_adaptive_multipliers
+from core.crypto_signal_engine import compute_btc_strength, generate_signal, get_adaptive_multipliers, get_last_signal_debug
 from core.crypto_sizing_engine import size_position
 from core.crypto_types import CryptoPosition, CryptoSignal
 
@@ -314,6 +316,49 @@ def _process_symbol(
         onchain_score=onchain_score,
         btc_strength=0.0 if symbol == "BTCUSDT" else btc_strength,
     )
+
+    # --- Observability: persist every signal decision to the analytics log ---
+    try:
+        dbg = get_last_signal_debug(symbol)
+        if dbg:
+            projected_size = size_position(signal_obj, balance_usd) if signal_obj.direction != "flat" else 0.0
+            insert_signal_log(conn, {  # type: ignore[arg-type]
+                "event_id": str(uuid.uuid4()),
+                "timestamp": signal_obj.timestamp,
+                "symbol": symbol,
+                "mode": mode,
+                "regime_raw": dbg.get("regime_raw", "unknown"),
+                "regime_confirmed": dbg.get("regime_confirmed", "unknown"),
+                "regime_persistence": dbg.get("regime_persistence", 0),
+                "tech_signed": dbg.get("tech_signed", 0.0),
+                "rsi_score": dbg.get("rsi_score", 0.0),
+                "macd_score": dbg.get("macd_score", 0.0),
+                "vwap_score": dbg.get("vwap_score", 0.0),
+                "volume_score": dbg.get("volume_score", 0.0),
+                "news_score": dbg.get("news_score", 0.0),
+                "onchain_score": dbg.get("onchain_score", 0.0),
+                "btc_strength": dbg.get("btc_strength", 0.0),
+                "btc_modifier": dbg.get("btc_modifier", 1.0),
+                "combined_before_btc": dbg.get("combined_before_btc", 0.0),
+                "combined_after_btc": dbg.get("combined_after_btc", 0.0),
+                "threshold": dbg.get("threshold", 0.63),
+                "threshold_reason": dbg.get("threshold_reason", "normal"),
+                "htf_trend": dbg.get("htf_trend", "neutral"),
+                "htf_alignment": dbg.get("htf_alignment", 0),
+                "direction": dbg.get("direction", "flat"),
+                "confidence": dbg.get("confidence", 0.0),
+                "would_enter": 1 if dbg.get("would_enter") else 0,
+                "skip_reason": dbg.get("skip_reason"),
+                "regime_size_mult": dbg.get("regime_size_mult", 1.0),
+                "kelly_fraction": 0.0,
+                "position_size_usd": projected_size,
+                "entry_price": dbg.get("entry_price", 0.0),
+                "stop_loss": dbg.get("stop_loss", 0.0),
+                "take_profit": dbg.get("take_profit", 0.0),
+                "ranging_mean_reversion": 1 if dbg.get("ranging_mean_reversion") else 0,
+            })
+    except Exception as _log_exc:
+        logger.debug("process: signal_log write failed for %s: %s", symbol, _log_exc)
 
     if signal_obj.direction != "flat":
         ts = int(time.time())
