@@ -113,7 +113,7 @@ def size_position(
     if k <= 0.0:
         return 0.0
 
-    raw = k * balance_usd
+    raw = k * balance_usd * getattr(signal, "regime_size_mult", 1.0)
     if raw < _MIN_POSITION_USD:
         return 0.0
 

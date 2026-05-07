@@ -36,6 +36,8 @@ class CryptoSignal:
     stop_loss: float
     take_profit: float
     timestamp: float       # unix seconds
+    regime: str = "unknown"         # "trending" | "ranging" | "volatile" | "unknown"
+    regime_size_mult: float = 1.0   # multiply raw Kelly size by this (< 1 in volatile/ranging)
 
 
 @dataclass(frozen=True)

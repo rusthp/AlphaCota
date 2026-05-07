@@ -68,7 +68,9 @@ _WEIGHT_NEWS      = 0.10
 #       or strongly bullish news (score≥0.30) tips it over. Single indicator never clears.
 _LONG_THRESHOLD = 0.63
 _SHORT_THRESHOLD = -0.63
-_MIN_SIGNAL_CONFIDENCE = 0.65
+# Must equal _LONG_THRESHOLD — setting higher creates a dead zone where
+# direction="long/short" but confidence check immediately returns flat.
+_MIN_SIGNAL_CONFIDENCE = 0.63
 
 # ADX thresholds for regime classification.
 _ADX_TRENDING = 25.0    # above → trending
@@ -79,6 +81,22 @@ _ADX_RANGING  = 12.0    # below → ranging (no trade); was 15 — lowered to al
 # to compensate for the weaker directional regime.
 _ONCHAIN_RANGING_OVERRIDE = 0.45
 _ONCHAIN_RANGING_THRESHOLD = 0.70
+
+# Ranging mean-reversion threshold: RSI < 30 or RSI > 70 allows a mean-reversion
+# entry in ranging markets, but with a higher confidence bar and reduced position size.
+_RANGING_MR_RSI_LOW = 30.0
+_RANGING_MR_RSI_HIGH = 70.0
+_RANGING_MR_THRESHOLD = 0.70   # higher than trending threshold (0.63)
+_RANGING_MR_SIZE_MULT = 0.7    # 30% smaller positions in ranging mean-reversion
+
+# Volatile regime size multiplier: reduce position size to limit drawdown in choppy markets.
+_VOLATILE_SIZE_MULT = 0.6
+
+# BTC global regime filter: applied to combined score for all non-BTC symbols.
+# Amplifies (×1.12) signals aligned with BTC trend, attenuates (×0.82) opposing ones.
+# Not applied to BTCUSDT itself to avoid circular self-filtering.
+_BTC_ALIGN_FACTOR = 1.12    # boost when 15m direction agrees with BTC 4H trend
+_BTC_OPPOSE_FACTOR = 0.82   # dampen when 15m direction opposes BTC 4H trend
 
 # Risk sizing constants.
 _ATR_PERIOD = 14
@@ -532,6 +550,7 @@ def generate_signal(
     tp_mult: float | None = None,
     htf_candles: list[CryptoCandle] | None = None,
     onchain_score: float = 0.0,
+    btc_trend: str = "neutral",
 ) -> CryptoSignal:
     """Produce a CryptoSignal combining technicals, on-chain signals, and news.
 
@@ -539,12 +558,16 @@ def generate_signal(
         1. compute_technical_signal -> (tech_dir, tech_conf)
         2. Convert to signed magnitude in [-1, 1].
         3. combined = 0.75 * tech_signed + 0.15 * onchain_score + 0.10 * news_score
-        4. Direction = long  if combined >  0.63
-                       short if combined < -0.63
+        4. BTC global regime modifier: amplify combined when 15m aligns with
+           BTC 4H trend (×1.12), attenuate when opposing (×0.82). No-op for BTCUSDT.
+        5. Ranging mean-reversion: instead of hard block, allow entry only at
+           RSI extremes (< 30 or > 70) with raised threshold (0.70) and reduced size.
+        6. Direction = long  if combined >  threshold
+                       short if combined < -threshold
                        flat  otherwise
-        5. Multi-timeframe filter: suppress signals contradicting 4H HTF trend.
-        6. ATR(14) drives SL/TP levels.
-        7. Only emit non-flat signals with confidence >= 0.65; otherwise flat.
+        7. Multi-timeframe filter: suppress signals contradicting 4H HTF trend.
+        8. ATR(14) drives SL/TP levels.
+        9. Only emit non-flat signals with confidence >= 0.63; otherwise flat.
 
     Args:
         symbol: Exchange symbol (e.g. "BTCUSDT").
@@ -552,6 +575,8 @@ def generate_signal(
         news_score: Aggregate news sentiment in [-1, 1].
         order_book_imbalance: Book imbalance in [-1, 1].
         onchain_score: Weighted on-chain composite (funding + OI + L/S) in [-1, 1].
+        btc_trend: Pre-computed BTC 4H trend ("bullish"/"bearish"/"neutral").
+                   Passed by the loop; "neutral" disables the BTC modifier.
 
     Returns:
         CryptoSignal — flat when data is thin or confidence is below threshold.
@@ -571,25 +596,33 @@ def generate_signal(
             timestamp=now,
         )
 
-    # Regime detection — ranging markets skip new entries unless on-chain
-    # data provides strong directional conviction (|onchain_agg| > 0.45).
-    # In that case the entry threshold is raised to 0.70 to compensate.
+    # --- Regime detection ---
     regime = detect_market_regime(candles)
     onchain_override_active = (
         regime == "ranging"
         and abs(onchain_score) >= _ONCHAIN_RANGING_OVERRIDE
     )
+
+    # Ranging mean-reversion gate: instead of an absolute block, allow entries
+    # only at RSI extremes (< 30 oversold / > 70 overbought) with a higher
+    # confidence threshold and reduced position size.
+    ranging_mean_reversion = False
     if regime == "ranging" and not onchain_override_active:
-        return CryptoSignal(
-            symbol=symbol,
-            direction="flat",
-            confidence=0.0,
-            reason="ranging_market_adx_too_low",
-            entry_price=entry_price,
-            stop_loss=0.0,
-            take_profit=0.0,
-            timestamp=now,
-        )
+        rsi_vals = calculate_rsi([c.close for c in candles], 14)
+        last_rsi = rsi_vals[-1] if rsi_vals and not math.isnan(rsi_vals[-1]) else 50.0
+        if _RANGING_MR_RSI_LOW <= last_rsi <= _RANGING_MR_RSI_HIGH:
+            return CryptoSignal(
+                symbol=symbol,
+                direction="flat",
+                confidence=0.0,
+                reason=f"ranging_market_rsi={last_rsi:.1f}_not_extreme",
+                entry_price=entry_price,
+                stop_loss=0.0,
+                take_profit=0.0,
+                timestamp=now,
+                regime=regime,
+            )
+        ranging_mean_reversion = True  # RSI at extreme → proceed with higher threshold
 
     tech_dir, tech_conf = compute_technical_signal(candles, order_book_imbalance, regime)
     tech_signed = 0.0
@@ -598,18 +631,36 @@ def generate_signal(
     elif tech_dir == "short":
         tech_signed = -tech_conf
 
-    clamped_news = max(-1.0, min(1.0, float(news_score)))
-    clamped_onchain = max(-1.0, min(1.0, float(onchain_score)))
+    clamped_news = max(-1.0, min(1.0, news_score))
+    clamped_onchain = max(-1.0, min(1.0, onchain_score))
     combined = (
         _WEIGHT_TECHNICAL * tech_signed
         + _WEIGHT_ONCHAIN * clamped_onchain
         + _WEIGHT_NEWS * clamped_news
     )
     combined = max(-1.0, min(1.0, combined))
+
+    # --- BTC global regime modifier ---
+    # Amplifies combined when the 15m signal aligns with BTC 4H trend,
+    # attenuates when opposing. Not applied to BTCUSDT itself.
+    btc_factor_applied = 1.0
+    if symbol != "BTCUSDT" and btc_trend != "neutral":
+        if combined > 0:   # long-leaning
+            btc_factor_applied = _BTC_ALIGN_FACTOR if btc_trend == "bullish" else _BTC_OPPOSE_FACTOR
+        elif combined < 0:  # short-leaning
+            btc_factor_applied = _BTC_ALIGN_FACTOR if btc_trend == "bearish" else _BTC_OPPOSE_FACTOR
+        combined = max(-1.0, min(1.0, combined * btc_factor_applied))
+
     confidence = round(abs(combined), 4)
 
-    long_thresh  = _ONCHAIN_RANGING_THRESHOLD if onchain_override_active else _LONG_THRESHOLD
-    short_thresh = -_ONCHAIN_RANGING_THRESHOLD if onchain_override_active else _SHORT_THRESHOLD
+    # Effective threshold: raised for ranging mean-reversion and on-chain override.
+    if onchain_override_active:
+        long_thresh = _ONCHAIN_RANGING_THRESHOLD
+    elif ranging_mean_reversion:
+        long_thresh = _RANGING_MR_THRESHOLD
+    else:
+        long_thresh = _LONG_THRESHOLD
+    short_thresh = -long_thresh
 
     if combined > long_thresh:
         direction = "long"
@@ -618,7 +669,7 @@ def generate_signal(
     else:
         direction = "flat"
 
-    # Multi-timeframe filter: suppress signals that contradict HTF trend.
+    # --- Multi-timeframe filter: suppress signals contradicting 4H HTF trend ---
     htf_trend = "neutral"
     if htf_candles:
         htf_trend = compute_htf_trend(htf_candles)
@@ -635,12 +686,14 @@ def generate_signal(
             reason=(
                 f"regime={regime} below_threshold combined={combined:.3f} "
                 f"tech={tech_signed:.3f} news={clamped_news:.3f}"
+                + (f" btc={btc_trend}(×{btc_factor_applied})" if btc_factor_applied != 1.0 else "")
                 + (f" htf={htf_trend}" if htf_trend != "neutral" else "")
             ),
             entry_price=entry_price,
             stop_loss=0.0,
             take_profit=0.0,
             timestamp=now,
+            regime=regime,
         )
 
     atr = calculate_atr(candles, _ATR_PERIOD)
@@ -654,6 +707,7 @@ def generate_signal(
             stop_loss=0.0,
             take_profit=0.0,
             timestamp=now,
+            regime=regime,
         )
 
     _sl = sl_mult if sl_mult is not None else _ATR_SL_MULT
@@ -676,12 +730,26 @@ def generate_signal(
             stop_loss=0.0,
             take_profit=0.0,
             timestamp=now,
+            regime=regime,
         )
+
+    # Regime-aware position size multiplier:
+    #   volatile        → 0.6 (choppy market, limit exposure)
+    #   ranging MR      → 0.7 (counter-trend, smaller size)
+    #   trending/other  → 1.0
+    if regime == "volatile":
+        regime_size_mult = _VOLATILE_SIZE_MULT
+    elif ranging_mean_reversion:
+        regime_size_mult = _RANGING_MR_SIZE_MULT
+    else:
+        regime_size_mult = 1.0
 
     reason = (
         f"regime={regime} tech_dir={tech_dir} tech_conf={tech_conf:.3f} "
         f"news={clamped_news:.3f} combined={combined:.3f} atr={atr:.6f}"
+        + (f" btc={btc_trend}(×{btc_factor_applied})" if btc_factor_applied != 1.0 else "")
         + (f" htf={htf_trend}" if htf_trend != "neutral" else "")
+        + (f" size_mult={regime_size_mult}" if regime_size_mult != 1.0 else "")
     )
     return CryptoSignal(
         symbol=symbol,
@@ -692,6 +760,8 @@ def generate_signal(
         stop_loss=round(stop_loss, 8),
         take_profit=round(take_profit, 8),
         timestamp=now,
+        regime=regime,
+        regime_size_mult=regime_size_mult,
     )
 
 
@@ -703,6 +773,7 @@ def decompose_signal(
     htf_candles: list[CryptoCandle] | None = None,
     onchain_score: float = 0.0,
     onchain_detail: dict | None = None,
+    btc_trend: str = "neutral",
 ) -> dict:
     """Return full signal decomposition without emitting a CryptoSignal.
 
@@ -740,18 +811,25 @@ def decompose_signal(
         and abs(onchain_score) >= _ONCHAIN_RANGING_OVERRIDE
     )
 
+    ranging_mean_reversion = False
     if regime == "ranging" and not onchain_override_active:
-        return {
-            "symbol": symbol, "price": round(entry_price, 8), "regime": regime,
-            "adx": round(adx, 2), "tech": _flat_tech, "ml": _flat_ml,
-            "onchain": onchain_detail or {"available": False},
-            "news_score": round(float(news_score), 4),
-            "news_weight_contribution": round(_WEIGHT_NEWS * max(-1.0, min(1.0, float(news_score))), 4),
-            "combined": 0.0, "threshold": _LONG_THRESHOLD,
-            "htf_trend": "neutral", "decision": "flat",
-            "would_enter": False, "skip_reason": "ranging_market",
-            "vwap": _flat_vwap, "volume_spike": _flat_vol,
-        }
+        rsi_vals = calculate_rsi([c.close for c in candles], 14)
+        last_rsi = rsi_vals[-1] if rsi_vals and not math.isnan(rsi_vals[-1]) else 50.0
+        if _RANGING_MR_RSI_LOW <= last_rsi <= _RANGING_MR_RSI_HIGH:
+            return {
+                "symbol": symbol, "price": round(entry_price, 8), "regime": regime,
+                "adx": round(adx, 2), "tech": _flat_tech, "ml": _flat_ml,
+                "onchain": onchain_detail or {"available": False},
+                "news_score": round(news_score, 4),
+                "news_weight_contribution": round(_WEIGHT_NEWS * max(-1.0, min(1.0, news_score)), 4),
+                "combined": 0.0, "threshold": _LONG_THRESHOLD,
+                "htf_trend": "neutral", "decision": "flat",
+                "would_enter": False, "skip_reason": f"ranging_market_rsi={last_rsi:.1f}_not_extreme",
+                "vwap": _flat_vwap, "volume_spike": _flat_vol,
+                "btc_trend": btc_trend, "btc_factor_applied": 1.0,
+                "ranging_mean_reversion": False, "regime_size_mult": 1.0,
+            }
+        ranging_mean_reversion = True
 
     tech_dir, tech_conf = compute_technical_signal(candles, order_book_imbalance, regime)
     tech_signed = tech_conf if tech_dir == "long" else (-tech_conf if tech_dir == "short" else 0.0)
@@ -760,8 +838,8 @@ def decompose_signal(
     last_close = candles[-1].close
     vol_spike = compute_volume_spike(candles, period=20, multiplier=1.5)
 
-    clamped_news = max(-1.0, min(1.0, float(news_score)))
-    clamped_onchain = max(-1.0, min(1.0, float(onchain_score)))
+    clamped_news = max(-1.0, min(1.0, news_score))
+    clamped_onchain = max(-1.0, min(1.0, onchain_score))
     combined = (
         _WEIGHT_TECHNICAL * tech_signed
         + _WEIGHT_ONCHAIN * clamped_onchain
@@ -769,7 +847,27 @@ def decompose_signal(
     )
     combined = max(-1.0, min(1.0, combined))
 
-    threshold = _ONCHAIN_RANGING_THRESHOLD if onchain_override_active else _LONG_THRESHOLD
+    btc_factor_applied = 1.0
+    if symbol != "BTCUSDT" and btc_trend != "neutral":
+        if combined > 0:
+            btc_factor_applied = _BTC_ALIGN_FACTOR if btc_trend == "bullish" else _BTC_OPPOSE_FACTOR
+        elif combined < 0:
+            btc_factor_applied = _BTC_ALIGN_FACTOR if btc_trend == "bearish" else _BTC_OPPOSE_FACTOR
+        combined = max(-1.0, min(1.0, combined * btc_factor_applied))
+
+    if onchain_override_active:
+        threshold = _ONCHAIN_RANGING_THRESHOLD
+    elif ranging_mean_reversion:
+        threshold = _RANGING_MR_THRESHOLD
+    else:
+        threshold = _LONG_THRESHOLD
+
+    if regime == "volatile":
+        regime_size_mult = _VOLATILE_SIZE_MULT
+    elif ranging_mean_reversion:
+        regime_size_mult = _RANGING_MR_SIZE_MULT
+    else:
+        regime_size_mult = 1.0
 
     if combined > threshold:
         decision = "long"
@@ -811,6 +909,10 @@ def decompose_signal(
         "decision": decision,
         "would_enter": decision != "flat",
         "skip_reason": skip_reason,
+        "btc_trend": btc_trend,
+        "btc_factor_applied": round(btc_factor_applied, 4),
+        "ranging_mean_reversion": ranging_mean_reversion,
+        "regime_size_mult": regime_size_mult,
         "vwap": {
             "value": round(vwap, 8),
             "price_vs_vwap": round((last_close - vwap) / vwap * 100, 3) if vwap > 0 else 0.0,

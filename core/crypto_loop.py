@@ -74,7 +74,7 @@ from core.crypto_risk_engine import (
     should_exit_position,
     validate_signal_risk,
 )
-from core.crypto_signal_engine import generate_signal, get_adaptive_multipliers
+from core.crypto_signal_engine import compute_htf_trend, generate_signal, get_adaptive_multipliers
 from core.crypto_sizing_engine import size_position
 from core.crypto_types import CryptoPosition, CryptoSignal
 
@@ -230,6 +230,7 @@ def _process_symbol(
     news_cache: list,
     balance_usd: float,
     bot_config: dict | None = None,
+    btc_trend: str = "neutral",
 ) -> tuple[CryptoSignal | None, float, bool]:
     """Run the full per-symbol pipeline and, when allowed, open a new position.
 
@@ -311,6 +312,7 @@ def _process_symbol(
         tp_mult=adap_tp,
         htf_candles=htf_candles,
         onchain_score=onchain_score,
+        btc_trend="neutral" if symbol == "BTCUSDT" else btc_trend,
     )
 
     if signal_obj.direction != "flat":
@@ -339,11 +341,22 @@ def _process_symbol(
             ])
             ml_sig = _ml_get_confidence(symbol, _CANDLE_INTERVAL, df=candles_df)
             if ml_sig.direction != signal_obj.direction:
-                logger.info(
-                    "process: %s ML disagrees (tech=%s ml=%s conf=%.2f) — skipping",
-                    symbol, signal_obj.direction, ml_sig.direction, ml_sig.confidence,
-                )
-                return (signal_obj, last_price, False)
+                # Allow entry when ML is uncertain (flat) but tech signal is
+                # strong (≥0.72). ML "flat" at high tech confidence means the
+                # model is ambiguous, not actively bearish — don't hard-block.
+                tech_strong = signal_obj.confidence >= 0.72
+                ml_uncertain = ml_sig.direction == "flat"
+                if tech_strong and ml_uncertain:
+                    logger.info(
+                        "process: %s ML uncertain (ml=flat conf=%.2f) but tech strong (%.2f) — allowing",
+                        symbol, ml_sig.confidence, signal_obj.confidence,
+                    )
+                else:
+                    logger.info(
+                        "process: %s ML disagrees (tech=%s ml=%s conf=%.2f) — skipping",
+                        symbol, signal_obj.direction, ml_sig.direction, ml_sig.confidence,
+                    )
+                    return (signal_obj, last_price, False)
             if ml_sig.confidence < _ML_MIN_CONFIDENCE:
                 logger.info(
                     "process: %s ML confidence too low (%.2f < %.2f) — skipping",
@@ -529,6 +542,15 @@ def run_loop(mode: str = "paper", max_iterations: int = 0) -> None:
                 existing_positions = get_open_positions(conn, mode)
                 open_symbols: set[str] = {p.symbol for p in existing_positions}
 
+                # BTC global regime filter: fetch BTC 4H once per iteration.
+                btc_trend_global = "neutral"
+                try:
+                    btc_htf = fetch_candles("BTCUSDT", interval="4h", limit=210)
+                    btc_trend_global = compute_htf_trend(btc_htf)
+                    logger.debug("run_loop: BTC 4H trend = %s", btc_trend_global)
+                except Exception as exc:
+                    logger.debug("run_loop: BTC 4H fetch failed (%s) — btc_trend neutral", exc)
+
                 signals_by_symbol: dict[str, CryptoSignal] = {}
                 price_by_symbol: dict[str, float] = {}
                 opened_this_iter = 0
@@ -541,6 +563,7 @@ def run_loop(mode: str = "paper", max_iterations: int = 0) -> None:
                         continue
                     sig, last_price, opened = _process_symbol(
                         sym, conn, mode, news_cache, balance_usd, bot_config,
+                        btc_trend=btc_trend_global,
                     )
                     if sig is not None:
                         signals_by_symbol[sym] = sig
