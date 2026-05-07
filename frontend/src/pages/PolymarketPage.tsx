@@ -950,6 +950,16 @@ export default function PolymarketPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["pm-status"] }),
   });
 
+  const startMutation = useMutation({
+    mutationFn: () => fetchJSON("/api/polymarket/loop/start", { method: "POST", headers: getAuthHeader() }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["pm-status"] }),
+  });
+
+  const stopMutation = useMutation({
+    mutationFn: () => fetchJSON("/api/polymarket/loop/stop", { method: "POST", headers: getAuthHeader() }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["pm-status"] }),
+  });
+
   const seedMutation = useMutation({
     mutationFn: () => fetchJSON("/api/polymarket/wallets/seed?markets=100&min_size=5", { method: "POST" }),
     onSuccess: () => setTimeout(() => qc.invalidateQueries({ queryKey: ["pm-wallets"] }), 5000),
@@ -994,7 +1004,27 @@ export default function PolymarketPage() {
           >
             <RefreshCw className="w-3 h-3 mr-1" /> Atualizar
           </Button>
-          {status && !status.kill_switch_active && (
+          {status && !status.running && (
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => startMutation.mutate()}
+              disabled={startMutation.isPending}
+            >
+              <Power className="w-3 h-3 mr-1" /> {startMutation.isPending ? "Iniciando..." : "Iniciar Loop"}
+            </Button>
+          )}
+          {status && status.running && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => { if (confirm("Parar o loop? Use kill-switch para parada segura no próximo ciclo.")) stopMutation.mutate(); }}
+              disabled={stopMutation.isPending}
+            >
+              <Power className="w-3 h-3 mr-1" /> {stopMutation.isPending ? "Parando..." : "Parar Loop"}
+            </Button>
+          )}
+          {status && status.running && !status.kill_switch_active && (
             <Button
               variant="destructive"
               size="sm"

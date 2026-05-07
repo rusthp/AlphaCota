@@ -1136,24 +1136,99 @@ def portfolio_tearsheet(tickers: str, weights: str):
 # Polymarket trading routes
 # ---------------------------------------------------------------------------
 
-import time as _time_mod
+_PM_PID_FILE = "data/POLYMARKET_LOOP.pid"
+_PM_KILL_FILE = "data/POLYMARKET_KILL"
 
-_pm_loop_start: float | None = None
-_pm_loop_mode: str = "paper"
+
+def _pm_loop_pid() -> int | None:
+    from pathlib import Path as _Path
+    p = _Path(_PM_PID_FILE)
+    if not p.exists():
+        return None
+    try:
+        return int(p.read_text().strip())
+    except Exception:
+        return None
 
 
 @app.get("/api/polymarket/status")
 def polymarket_status():
     """Return Polymarket loop running status, mode, and uptime."""
+    import os as _os
     from pathlib import Path
-    kill_active = Path("data/POLYMARKET_KILL").exists()
-    uptime = round(_time_mod.time() - _pm_loop_start, 1) if _pm_loop_start else None
+    kill_active = Path(_PM_KILL_FILE).exists()
+    pid = _pm_loop_pid()
+    running = pid is not None and _pid_alive(pid)
+    mode = _os.getenv("POLYMARKET_MODE", "paper")
     return {
-        "running": _pm_loop_start is not None,
-        "mode": _pm_loop_mode,
-        "uptime_seconds": uptime,
+        "running": running,
+        "pid": pid if running else None,
+        "mode": mode,
+        "uptime_seconds": None,
         "kill_switch_active": kill_active,
     }
+
+
+@app.post("/api/polymarket/loop/start")
+def polymarket_loop_start():
+    """Spawn the Polymarket trading loop as a background subprocess."""
+    import sys as _sys
+    import subprocess as _sp
+    import os as _os
+    from pathlib import Path as _Path
+
+    pid = _pm_loop_pid()
+    if pid is not None and _pid_alive(pid):
+        return {"running": True, "pid": pid, "message": "Loop already running"}
+
+    kill_file = _Path(_PM_KILL_FILE)
+    if kill_file.exists():
+        kill_file.unlink()
+
+    mode = _os.getenv("POLYMARKET_MODE", "paper")
+    cmd = [_sys.executable, "-m", "core.polymarket_loop", "--mode", mode]
+    if _os.name == "nt":
+        proc = _sp.Popen(
+            cmd,
+            stdout=_sp.DEVNULL,
+            stderr=_sp.DEVNULL,
+            creationflags=_sp.CREATE_NEW_PROCESS_GROUP | _sp.DETACHED_PROCESS,
+        )
+    else:
+        proc = _sp.Popen(
+            cmd,
+            stdout=_sp.DEVNULL,
+            stderr=_sp.DEVNULL,
+            start_new_session=True,
+        )
+    _Path(_PM_PID_FILE).parent.mkdir(parents=True, exist_ok=True)
+    _Path(_PM_PID_FILE).write_text(str(proc.pid))
+    return {"running": True, "pid": proc.pid, "message": f"Loop started in {mode} mode (PID {proc.pid})"}
+
+
+@app.post("/api/polymarket/loop/stop")
+def polymarket_loop_stop():
+    """Activate kill-switch; loop exits at next iteration check."""
+    import os as _os
+    from pathlib import Path as _Path
+
+    kill_file = _Path(_PM_KILL_FILE)
+    kill_file.parent.mkdir(parents=True, exist_ok=True)
+    kill_file.touch()
+
+    pid = _pm_loop_pid()
+    if pid is None or not _pid_alive(pid):
+        _Path(_PM_PID_FILE).unlink(missing_ok=True)
+        return {"running": False, "message": "Loop was not running"}
+
+    if _os.name != "nt":
+        try:
+            _os.kill(pid, 15)
+        except Exception:
+            pass
+
+    _Path(_PM_PID_FILE).unlink(missing_ok=True)
+    return {"running": False, "message": "Kill-switch activated"}
 
 
 @app.get("/api/polymarket/positions")
@@ -1221,6 +1296,7 @@ def polymarket_kill(_: dict = Depends(get_current_user)):
 @app.get("/api/polymarket/live-status")
 def polymarket_live_status():
     """Return wallet USDC balance, daily PnL, open positions, mode, and preflight timestamp."""
+    import os as _os
     from core.polymarket_client import get_wallet_health
     from core.polymarket_ledger import init_db
     from datetime import date
@@ -1238,7 +1314,7 @@ def polymarket_live_status():
 
     wallet = get_wallet_health()
     return {
-        "mode": _pm_loop_mode,
+        "mode": _os.getenv("POLYMARKET_MODE", "paper"),
         "usdc_balance": round(wallet.usdc_balance, 2),
         "daily_realized_pnl": round(float(daily_pnl), 2),
         "open_positions": int(open_count),
