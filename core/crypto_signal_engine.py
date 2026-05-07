@@ -263,7 +263,7 @@ def calculate_adx(candles: list[CryptoCandle], period: int = 14) -> float:
     adx = sum(dx_vals[:period]) / period
     for dx in dx_vals[period:]:
         adx = (adx * (period - 1) + dx) / period
-    return round(float(adx), 4)
+    return round(adx, 4)
 
 
 # ---------------------------------------------------------------------------
@@ -344,7 +344,7 @@ def calculate_atr(candles: list[CryptoCandle], period: int = 14) -> float:
     atr = sum(trs[:period]) / period
     for i in range(period, len(trs)):
         atr = (atr * (period - 1) + trs[i]) / period
-    return float(atr)
+    return atr
 
 
 # ---------------------------------------------------------------------------
@@ -452,7 +452,7 @@ def compute_technical_signal(
             rsi_component = 0.5
 
     # ---- OBI component (clamped) ----
-    obi_component = max(-1.0, min(1.0, float(order_book_imbalance)))
+    obi_component = max(-1.0, min(1.0, order_book_imbalance))
 
     # ---- VWAP component ----
     vwap = calculate_vwap(candles, period=50)
