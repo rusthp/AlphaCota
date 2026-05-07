@@ -97,7 +97,7 @@ interface Position {
 interface PnlSnapshot { date: string; equity_usd: number; daily_pnl: number; }
 interface LiveStatus { mode: string; usdc_balance: number; daily_realized_pnl: number; open_positions: number; wallet_healthy: boolean; }
 interface BotStatus { running: boolean; mode: string; kill_switch_active: boolean; uptime_seconds: number | null; }
-interface TrendingMarket { condition_id: string; question: string; volume_1wk: number; outcomes: string[]; prices: number[]; }
+interface TrendingMarket { condition_id: string; question: string; volume_1wk: number; outcomes: string[]; prices: number[]; clob_token_ids?: string[]; }
 interface PolyOrder { order_id: string; market_id: string; question: string; direction: string; size_usd: number; fill_price: number | null; status: string; mode: string; created_at: number; }
 interface PolyCalibration { overall_brier: number; overall_win_rate: number; total_resolved: number; lookback_days: number; categories: { category: string; brier_score: number; win_rate: number; mean_edge: number; resolved_count: number }[]; }
 interface PriceHistorySeries { ts: number; [outcome: string]: number; }
@@ -620,7 +620,11 @@ export default function TerminalPage() {
   });
   const polyPriceHistQ = useQuery<PriceHistoryData>({
     queryKey: ["term-poly-hist", selectedMarket?.condition_id],
-    queryFn: () => API(`/api/polymarket/price-history/${selectedMarket!.condition_id}?interval=1w`),
+    queryFn: () => {
+      const ids = selectedMarket!.clob_token_ids?.join(",") ?? "";
+      const qs = ids ? `?token_ids=${encodeURIComponent(ids)}` : "";
+      return API(`/api/polymarket/price-history/${selectedMarket!.condition_id}${qs}`);
+    },
     staleTime: 120_000, refetchInterval: 120_000,
     enabled: termMode === "poly" && selectedMarket != null,
   });

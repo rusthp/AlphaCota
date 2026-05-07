@@ -1376,41 +1376,58 @@ def polymarket_orders(limit: int = 50):
 
 
 @app.get("/api/polymarket/price-history/{condition_id}")
-def polymarket_price_history(condition_id: str, interval: str = "1d"):
+def polymarket_price_history(condition_id: str, interval: str = "max", token_ids: str = ""):  # noqa: ARG001 — interval reserved for future sub-range filtering
     """Fetch probability evolution for all outcomes of a market.
 
-    Calls CLOB prices-history for each token_id in the market, returning
-    a list of {timestamp, outcome, price} rows suitable for recharts LineChart.
+    Resolves token_ids via Gamma API (clobTokenIds) when not supplied directly.
     interval: max (all time), 1d, 1w, 1m, 6m, 1y
     """
     import httpx as _httpx
+    import json as _json
 
     _CLOB_BASE = "https://clob.polymarket.com"
-    _INTERVAL_MAP = {"max": "max", "1d": "1d", "1w": "1w", "1m": "1m", "6m": "6m", "1y": "1y"}
-    clob_interval = _INTERVAL_MAP.get(interval, "max")
+    _GAMMA_BASE = "https://gamma-api.polymarket.com"
+
+    # token_ids can be passed as comma-separated string to skip the Gamma lookup
+    preloaded_token_ids: list[str] = [t.strip() for t in token_ids.split(",") if t.strip()] if token_ids else []
+
+    # Resolve via Gamma API
+    question = ""
+    tokens: list[dict] = []
 
     try:
-        mkt_resp = _httpx.get(f"{_CLOB_BASE}/markets/{condition_id}", timeout=10)
-        if not mkt_resp.is_success:
-            raise HTTPException(status_code=502, detail=f"CLOB error {mkt_resp.status_code}")
-        mkt = mkt_resp.json()
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+        gamma_resp = _httpx.get(
+            f"{_GAMMA_BASE}/markets",
+            params={"conditionId": condition_id},
+            timeout=12,
+        )
+        if gamma_resp.is_success and gamma_resp.json():
+            mkt = gamma_resp.json()[0]
+            question = mkt.get("question", "")
+            outcomes_raw = mkt.get("outcomes", "[]")
+            if isinstance(outcomes_raw, str):
+                try:
+                    outcomes_list = _json.loads(outcomes_raw)
+                except Exception:
+                    outcomes_list = []
+            else:
+                outcomes_list = outcomes_raw
 
-    question = mkt.get("question", "")
-    tokens = mkt.get("tokens", [])  # [{token_id, outcome}, ...]
-    if not tokens:
-        # fallback: parse from outcomePrices / outcomes
-        outcomes = mkt.get("outcomes", [])
-        if isinstance(outcomes, str):
-            import json as _json
-            try:
-                outcomes = _json.loads(outcomes)
-            except Exception:
-                outcomes = []
-        tokens = [{"token_id": "", "outcome": o} for o in outcomes]
+            clob_ids_raw = mkt.get("clobTokenIds", "[]")
+            if isinstance(clob_ids_raw, str):
+                try:
+                    clob_ids = _json.loads(clob_ids_raw)
+                except Exception:
+                    clob_ids = []
+            else:
+                clob_ids = clob_ids_raw
+
+            for i, outcome in enumerate(outcomes_list):
+                tid = (preloaded_token_ids[i] if i < len(preloaded_token_ids)
+                       else clob_ids[i] if i < len(clob_ids) else "")
+                tokens.append({"token_id": tid, "outcome": outcome})
+    except Exception:
+        pass
 
     series: list[dict] = []
     timestamps_set: set[int] = set()
@@ -1424,7 +1441,7 @@ def polymarket_price_history(condition_id: str, interval: str = "1d"):
         try:
             hist_resp = _httpx.get(
                 f"{_CLOB_BASE}/prices-history",
-                params={"market": token_id, "interval": clob_interval},
+                params={"market": token_id, "interval": "max"},
                 timeout=15,
             )
             if not hist_resp.is_success:
@@ -1550,12 +1567,20 @@ def polymarket_trending_markets(limit: int = 10):
             outcomes = []
             prices = []
 
+        clob_ids_raw = m.get("clobTokenIds", "[]")
+        try:
+            import json as _json2
+            clob_token_ids = _json2.loads(clob_ids_raw) if isinstance(clob_ids_raw, str) else clob_ids_raw
+        except Exception:
+            clob_token_ids = []
+
         result.append({
             "condition_id": cid,
             "question": m.get("question", ""),
             "volume_1wk": m.get("volume1wkClob", 0),
             "outcomes": outcomes,
             "prices": prices,
+            "clob_token_ids": clob_token_ids,
         })
 
     return {"markets": result}
