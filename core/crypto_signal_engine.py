@@ -35,8 +35,6 @@ from __future__ import annotations
 import math
 import sqlite3
 import time
-from datetime import date
-from typing import TYPE_CHECKING
 
 from core.crypto_chart_engine import calculate_ema, calculate_macd, calculate_rsi
 from core.crypto_types import CryptoCandle, CryptoSignal
@@ -92,11 +90,14 @@ _RANGING_MR_SIZE_MULT = 0.7    # 30% smaller positions in ranging mean-reversion
 # Volatile regime size multiplier: reduce position size to limit drawdown in choppy markets.
 _VOLATILE_SIZE_MULT = 0.6
 
-# BTC global regime filter: applied to combined score for all non-BTC symbols.
-# Amplifies (×1.12) signals aligned with BTC trend, attenuates (×0.82) opposing ones.
+# BTC global regime filter: continuous modifier based on EMA50/EMA200 spread strength.
+# btc_strength ∈ [-1, 1] (normalised ±5% EMA spread cap).
+# Aligned signal:  modifier = 1.0 + strength × _BTC_ALIGN_SCALE   → max ×1.18
+# Opposing signal: modifier = 1.0 - strength × _BTC_OPPOSE_SCALE  → min ×0.75
 # Not applied to BTCUSDT itself to avoid circular self-filtering.
-_BTC_ALIGN_FACTOR = 1.12    # boost when 15m direction agrees with BTC 4H trend
-_BTC_OPPOSE_FACTOR = 0.82   # dampen when 15m direction opposes BTC 4H trend
+_BTC_ALIGN_SCALE  = 0.18    # aligned boost scale  (strength=1 → ×1.18)
+_BTC_OPPOSE_SCALE = 0.25    # opposing dampen scale (strength=1 → ×0.75)
+_BTC_STRENGTH_CAP = 0.05    # EMA spread % cap before normalisation
 
 # Regime persistence — minimum consecutive candles before a regime change is confirmed.
 # Volatile needs more evidence to enter (avoid reacting to brief spikes) and
@@ -603,6 +604,35 @@ def compute_htf_trend(candles: list[CryptoCandle]) -> str:
     return "neutral"
 
 
+def compute_btc_strength(candles: list[CryptoCandle]) -> float:
+    """Return a continuous BTC trend strength score in [-1, 1].
+
+    Uses the EMA50/EMA200 spread as a proxy for trend intensity:
+        strength = (ema50 - ema200) / ema200  (capped at ±_BTC_STRENGTH_CAP)
+        normalised to [-1, 1]
+
+    Positive → BTC bullish; negative → bearish; 0.0 → neutral/insufficient data.
+    """
+    if len(candles) < 60:
+        return 0.0
+    closes = [c.close for c in candles]
+    ema50 = calculate_ema(closes, 50)
+    last_ema50 = ema50[-1] if ema50 and not math.isnan(ema50[-1]) else None
+    if last_ema50 is None:
+        return 0.0
+    if len(closes) >= 200:
+        ema200 = calculate_ema(closes, 200)
+        last_ema200 = ema200[-1] if ema200 and not math.isnan(ema200[-1]) else None
+    else:
+        last_ema200 = None
+    reference = last_ema200 if last_ema200 and last_ema200 > 0 else (closes[-1] if closes[-1] > 0 else None)
+    if reference is None:
+        return 0.0
+    raw_spread = (last_ema50 - reference) / reference
+    clamped = max(-_BTC_STRENGTH_CAP, min(_BTC_STRENGTH_CAP, raw_spread))
+    return round(clamped / _BTC_STRENGTH_CAP, 4)
+
+
 # ---------------------------------------------------------------------------
 # Unified signal (pure)
 # ---------------------------------------------------------------------------
@@ -617,7 +647,7 @@ def generate_signal(
     tp_mult: float | None = None,
     htf_candles: list[CryptoCandle] | None = None,
     onchain_score: float = 0.0,
-    btc_trend: str = "neutral",
+    btc_strength: float = 0.0,
 ) -> CryptoSignal:
     """Produce a CryptoSignal combining technicals, on-chain signals, and news.
 
@@ -707,15 +737,23 @@ def generate_signal(
     )
     combined = max(-1.0, min(1.0, combined))
 
-    # --- BTC global regime modifier ---
-    # Amplifies combined when the 15m signal aligns with BTC 4H trend,
-    # attenuates when opposing. Not applied to BTCUSDT itself.
+    # --- BTC global regime modifier (continuous strength score) ---
+    # btc_strength ∈ [-1, 1]: positive = BTC bullish, negative = bearish.
+    # effective_strength > 0 means the 15m signal aligns with BTC direction.
+    # Aligned:  modifier = 1 + effective × 0.18  → max ×1.18
+    # Opposing: modifier = 1 + effective × 0.25  → min ×0.75
     btc_factor_applied = 1.0
-    if symbol != "BTCUSDT" and btc_trend != "neutral":
-        if combined > 0:   # long-leaning
-            btc_factor_applied = _BTC_ALIGN_FACTOR if btc_trend == "bullish" else _BTC_OPPOSE_FACTOR
-        elif combined < 0:  # short-leaning
-            btc_factor_applied = _BTC_ALIGN_FACTOR if btc_trend == "bearish" else _BTC_OPPOSE_FACTOR
+    if symbol != "BTCUSDT" and btc_strength != 0.0:
+        if combined > 0:    # long-leaning: positive BTC = aligned
+            effective = btc_strength
+        elif combined < 0:  # short-leaning: negative BTC = aligned
+            effective = -btc_strength
+        else:
+            effective = 0.0
+        if effective > 0:
+            btc_factor_applied = 1.0 + effective * _BTC_ALIGN_SCALE
+        elif effective < 0:
+            btc_factor_applied = 1.0 + effective * _BTC_OPPOSE_SCALE
         combined = max(-1.0, min(1.0, combined * btc_factor_applied))
 
     confidence = round(abs(combined), 4)
@@ -753,7 +791,7 @@ def generate_signal(
             reason=(
                 f"regime={regime} below_threshold combined={combined:.3f} "
                 f"tech={tech_signed:.3f} news={clamped_news:.3f}"
-                + (f" btc={btc_trend}(×{btc_factor_applied})" if btc_factor_applied != 1.0 else "")
+                + (f" btc_str={btc_strength:.2f}(×{btc_factor_applied:.3f})" if btc_factor_applied != 1.0 else "")
                 + (f" htf={htf_trend}" if htf_trend != "neutral" else "")
             ),
             entry_price=entry_price,
@@ -814,7 +852,7 @@ def generate_signal(
     reason = (
         f"regime={regime} tech_dir={tech_dir} tech_conf={tech_conf:.3f} "
         f"news={clamped_news:.3f} combined={combined:.3f} atr={atr:.6f}"
-        + (f" btc={btc_trend}(×{btc_factor_applied})" if btc_factor_applied != 1.0 else "")
+        + (f" btc_str={btc_strength:.2f}(×{btc_factor_applied:.3f})" if btc_factor_applied != 1.0 else "")
         + (f" htf={htf_trend}" if htf_trend != "neutral" else "")
         + (f" size_mult={regime_size_mult}" if regime_size_mult != 1.0 else "")
     )
@@ -840,7 +878,7 @@ def decompose_signal(
     htf_candles: list[CryptoCandle] | None = None,
     onchain_score: float = 0.0,
     onchain_detail: dict | None = None,
-    btc_trend: str = "neutral",
+    btc_strength: float = 0.0,
 ) -> dict:
     """Return full signal decomposition without emitting a CryptoSignal.
 
@@ -893,7 +931,7 @@ def decompose_signal(
                 "htf_trend": "neutral", "decision": "flat",
                 "would_enter": False, "skip_reason": f"ranging_market_rsi={last_rsi:.1f}_not_extreme",
                 "vwap": _flat_vwap, "volume_spike": _flat_vol,
-                "btc_trend": btc_trend, "btc_factor_applied": 1.0,
+                "btc_strength": btc_strength, "btc_factor_applied": 1.0,
                 "ranging_mean_reversion": False, "regime_size_mult": 1.0,
             }
         ranging_mean_reversion = True
@@ -915,11 +953,17 @@ def decompose_signal(
     combined = max(-1.0, min(1.0, combined))
 
     btc_factor_applied = 1.0
-    if symbol != "BTCUSDT" and btc_trend != "neutral":
+    if symbol != "BTCUSDT" and btc_strength != 0.0:
         if combined > 0:
-            btc_factor_applied = _BTC_ALIGN_FACTOR if btc_trend == "bullish" else _BTC_OPPOSE_FACTOR
+            effective = btc_strength
         elif combined < 0:
-            btc_factor_applied = _BTC_ALIGN_FACTOR if btc_trend == "bearish" else _BTC_OPPOSE_FACTOR
+            effective = -btc_strength
+        else:
+            effective = 0.0
+        if effective > 0:
+            btc_factor_applied = 1.0 + effective * _BTC_ALIGN_SCALE
+        elif effective < 0:
+            btc_factor_applied = 1.0 + effective * _BTC_OPPOSE_SCALE
         combined = max(-1.0, min(1.0, combined * btc_factor_applied))
 
     if onchain_override_active:
@@ -976,7 +1020,7 @@ def decompose_signal(
         "decision": decision,
         "would_enter": decision != "flat",
         "skip_reason": skip_reason,
-        "btc_trend": btc_trend,
+        "btc_strength": round(btc_strength, 4),
         "btc_factor_applied": round(btc_factor_applied, 4),
         "ranging_mean_reversion": ranging_mean_reversion,
         "regime_size_mult": regime_size_mult,

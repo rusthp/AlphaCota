@@ -74,7 +74,7 @@ from core.crypto_risk_engine import (
     should_exit_position,
     validate_signal_risk,
 )
-from core.crypto_signal_engine import compute_htf_trend, generate_signal, get_adaptive_multipliers
+from core.crypto_signal_engine import compute_btc_strength, generate_signal, get_adaptive_multipliers
 from core.crypto_sizing_engine import size_position
 from core.crypto_types import CryptoPosition, CryptoSignal
 
@@ -230,7 +230,7 @@ def _process_symbol(
     news_cache: list,
     balance_usd: float,
     bot_config: dict | None = None,
-    btc_trend: str = "neutral",
+    btc_strength: float = 0.0,
 ) -> tuple[CryptoSignal | None, float, bool]:
     """Run the full per-symbol pipeline and, when allowed, open a new position.
 
@@ -312,7 +312,7 @@ def _process_symbol(
         tp_mult=adap_tp,
         htf_candles=htf_candles,
         onchain_score=onchain_score,
-        btc_trend="neutral" if symbol == "BTCUSDT" else btc_trend,
+        btc_strength=0.0 if symbol == "BTCUSDT" else btc_strength,
     )
 
     if signal_obj.direction != "flat":
@@ -542,14 +542,14 @@ def run_loop(mode: str = "paper", max_iterations: int = 0) -> None:
                 existing_positions = get_open_positions(conn, mode)
                 open_symbols: set[str] = {p.symbol for p in existing_positions}
 
-                # BTC global regime filter: fetch BTC 4H once per iteration.
-                btc_trend_global = "neutral"
+                # BTC global regime filter: continuous strength score from EMA50/200 spread.
+                btc_strength_global = 0.0
                 try:
                     btc_htf = fetch_candles("BTCUSDT", interval="4h", limit=210)
-                    btc_trend_global = compute_htf_trend(btc_htf)
-                    logger.debug("run_loop: BTC 4H trend = %s", btc_trend_global)
+                    btc_strength_global = compute_btc_strength(btc_htf)
+                    logger.debug("run_loop: BTC 4H strength = %.3f", btc_strength_global)
                 except Exception as exc:
-                    logger.debug("run_loop: BTC 4H fetch failed (%s) — btc_trend neutral", exc)
+                    logger.debug("run_loop: BTC 4H fetch failed (%s) — btc_strength 0.0", exc)
 
                 signals_by_symbol: dict[str, CryptoSignal] = {}
                 price_by_symbol: dict[str, float] = {}
@@ -563,7 +563,7 @@ def run_loop(mode: str = "paper", max_iterations: int = 0) -> None:
                         continue
                     sig, last_price, opened = _process_symbol(
                         sym, conn, mode, news_cache, balance_usd, bot_config,
-                        btc_trend=btc_trend_global,
+                        btc_strength=btc_strength_global,
                     )
                     if sig is not None:
                         signals_by_symbol[sym] = sig
