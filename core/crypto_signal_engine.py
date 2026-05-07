@@ -98,6 +98,17 @@ _VOLATILE_SIZE_MULT = 0.6
 _BTC_ALIGN_FACTOR = 1.12    # boost when 15m direction agrees with BTC 4H trend
 _BTC_OPPOSE_FACTOR = 0.82   # dampen when 15m direction opposes BTC 4H trend
 
+# Regime persistence — minimum consecutive candles before a regime change is confirmed.
+# Volatile needs more evidence to enter (avoid reacting to brief spikes) and
+# more evidence to exit (volatile conditions unwind slowly).
+_REGIME_PERSIST_ENTER: dict[str, int] = {
+    "trending": 2,
+    "ranging":  2,
+    "volatile": 3,
+    "unknown":  1,
+}
+_REGIME_PERSIST_EXIT_VOLATILE = 5   # candles of non-volatile needed to leave volatile
+
 # Risk sizing constants.
 _ATR_PERIOD = 14
 _ATR_SL_MULT = 1.5
@@ -305,6 +316,62 @@ def detect_market_regime(candles: list[CryptoCandle]) -> str:
         return "volatile" if atr_pct > 0.012 else "ranging"
 
     return "ranging"
+
+
+# ---------------------------------------------------------------------------
+# Regime persistence — hysteresis filter to prevent rapid regime flipping
+# ---------------------------------------------------------------------------
+
+class _RegimeState:
+    """Per-symbol mutable state for regime hysteresis."""
+    __slots__ = ("current", "candidate", "candidate_count")
+
+    def __init__(self) -> None:
+        self.current: str = "unknown"
+        self.candidate: str = "unknown"
+        self.candidate_count: int = 0
+
+
+_regime_states: dict[str, _RegimeState] = {}
+
+
+def get_confirmed_regime(symbol: str, raw_regime: str) -> str:
+    """Apply hysteresis to raw regime detection and return the confirmed regime.
+
+    A regime change is only accepted after it persists for N consecutive
+    candles (see _REGIME_PERSIST_ENTER).  Exiting "volatile" requires even
+    more evidence (_REGIME_PERSIST_EXIT_VOLATILE) because volatile conditions
+    tend to unwind gradually rather than snap back instantly.
+
+    Args:
+        symbol:     Trading symbol — state is tracked per symbol.
+        raw_regime: Output of detect_market_regime() for the current candle.
+
+    Returns:
+        The confirmed regime string.  Starts as "unknown" until enough
+        candles accumulate to confirm the first regime.
+    """
+    state = _regime_states.setdefault(symbol, _RegimeState())
+
+    if raw_regime == state.candidate:
+        state.candidate_count += 1
+    else:
+        state.candidate = raw_regime
+        state.candidate_count = 1
+
+    if state.candidate == state.current:
+        return state.current
+
+    if state.current == "volatile":
+        threshold = _REGIME_PERSIST_EXIT_VOLATILE
+    else:
+        threshold = _REGIME_PERSIST_ENTER.get(state.candidate, 2)
+
+    if state.candidate_count >= threshold:
+        state.current = state.candidate
+        state.candidate_count = 0
+
+    return state.current
 
 
 # ---------------------------------------------------------------------------
@@ -596,8 +663,8 @@ def generate_signal(
             timestamp=now,
         )
 
-    # --- Regime detection ---
-    regime = detect_market_regime(candles)
+    # --- Regime detection (with hysteresis persistence filter) ---
+    regime = get_confirmed_regime(symbol, detect_market_regime(candles))
     onchain_override_active = (
         regime == "ranging"
         and abs(onchain_score) >= _ONCHAIN_RANGING_OVERRIDE
@@ -805,7 +872,7 @@ def decompose_signal(
         }
 
     adx = calculate_adx(candles, 14)
-    regime = detect_market_regime(candles)
+    regime = get_confirmed_regime(symbol, detect_market_regime(candles))
     onchain_override_active = (
         regime == "ranging"
         and abs(onchain_score) >= _ONCHAIN_RANGING_OVERRIDE
