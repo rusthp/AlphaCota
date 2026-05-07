@@ -1138,6 +1138,7 @@ def portfolio_tearsheet(tickers: str, weights: str):
 
 _PM_PID_FILE = "data/POLYMARKET_LOOP.pid"
 _PM_KILL_FILE = "data/POLYMARKET_KILL"
+_PM_START_FILE = "data/POLYMARKET_START.txt"
 
 
 def _pm_loop_pid() -> int | None:
@@ -1160,11 +1161,19 @@ def polymarket_status():
     pid = _pm_loop_pid()
     running = pid is not None and _pid_alive(pid)
     mode = _os.getenv("POLYMARKET_MODE", "paper")
+    uptime_seconds = None
+    if running:
+        try:
+            import time as _time
+            start_ts = float(Path(_PM_START_FILE).read_text().strip())
+            uptime_seconds = int(_time.time() - start_ts)
+        except Exception:
+            pass
     return {
         "running": running,
         "pid": pid if running else None,
         "mode": mode,
-        "uptime_seconds": None,
+        "uptime_seconds": uptime_seconds,
         "kill_switch_active": kill_active,
     }
 
@@ -1203,6 +1212,8 @@ def polymarket_loop_start():
         )
     _Path(_PM_PID_FILE).parent.mkdir(parents=True, exist_ok=True)
     _Path(_PM_PID_FILE).write_text(str(proc.pid))
+    import time as _time_start
+    _Path(_PM_START_FILE).write_text(str(_time_start.time()))
     return {"running": True, "pid": proc.pid, "message": f"Loop started in {mode} mode (PID {proc.pid})"}
 
 
