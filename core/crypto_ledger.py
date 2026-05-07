@@ -145,7 +145,13 @@ CREATE TABLE IF NOT EXISTS crypto_signal_log (
     -- Taker buy/sell upgrade fields
     taker_score            REAL NOT NULL DEFAULT 0.0,
     oi_breakout_confirmed  INTEGER NOT NULL DEFAULT 0,
-    breakout_bonus         REAL NOT NULL DEFAULT 0.0
+    breakout_bonus         REAL NOT NULL DEFAULT 0.0,
+
+    -- Raw market-structure values (immutable — scores/weights may change, raws never do)
+    raw_funding_rate       REAL NOT NULL DEFAULT 0.0,
+    raw_oi_delta_pct       REAL NOT NULL DEFAULT 0.0,
+    raw_taker_ratio        REAL NOT NULL DEFAULT 0.5,
+    raw_ls_ratio           REAL NOT NULL DEFAULT 1.0
 );
 
 CREATE INDEX IF NOT EXISTS idx_csl_timestamp        ON crypto_signal_log(timestamp);
@@ -166,11 +172,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
     except sqlite3.OperationalError:
         pass
 
-    # Taker upgrade columns — safe no-op if already present.
+    # Taker upgrade + raw field columns — safe no-op if already present.
     for _col, _ddl in (
         ("taker_score",           "ALTER TABLE crypto_signal_log ADD COLUMN taker_score REAL NOT NULL DEFAULT 0.0"),
         ("oi_breakout_confirmed", "ALTER TABLE crypto_signal_log ADD COLUMN oi_breakout_confirmed INTEGER NOT NULL DEFAULT 0"),
         ("breakout_bonus",        "ALTER TABLE crypto_signal_log ADD COLUMN breakout_bonus REAL NOT NULL DEFAULT 0.0"),
+        ("raw_funding_rate",      "ALTER TABLE crypto_signal_log ADD COLUMN raw_funding_rate REAL NOT NULL DEFAULT 0.0"),
+        ("raw_oi_delta_pct",      "ALTER TABLE crypto_signal_log ADD COLUMN raw_oi_delta_pct REAL NOT NULL DEFAULT 0.0"),
+        ("raw_taker_ratio",       "ALTER TABLE crypto_signal_log ADD COLUMN raw_taker_ratio REAL NOT NULL DEFAULT 0.5"),
+        ("raw_ls_ratio",          "ALTER TABLE crypto_signal_log ADD COLUMN raw_ls_ratio REAL NOT NULL DEFAULT 1.0"),
     ):
         try:
             conn.execute(_ddl)
@@ -577,7 +587,8 @@ def insert_signal_log(conn: sqlite3.Connection, entry: dict) -> None:
                 regime_size_mult, kelly_fraction, position_size_usd,
                 entry_price, stop_loss, take_profit,
                 ranging_mean_reversion,
-                taker_score, oi_breakout_confirmed, breakout_bonus
+                taker_score, oi_breakout_confirmed, breakout_bonus,
+                raw_funding_rate, raw_oi_delta_pct, raw_taker_ratio, raw_ls_ratio
             ) VALUES (
                 :event_id, :timestamp, :symbol, :mode,
                 :regime_raw, :regime_confirmed, :regime_persistence,
@@ -591,7 +602,8 @@ def insert_signal_log(conn: sqlite3.Connection, entry: dict) -> None:
                 :regime_size_mult, :kelly_fraction, :position_size_usd,
                 :entry_price, :stop_loss, :take_profit,
                 :ranging_mean_reversion,
-                :taker_score, :oi_breakout_confirmed, :breakout_bonus
+                :taker_score, :oi_breakout_confirmed, :breakout_bonus,
+                :raw_funding_rate, :raw_oi_delta_pct, :raw_taker_ratio, :raw_ls_ratio
             )
             """,
             entry,

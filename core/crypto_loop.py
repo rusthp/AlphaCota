@@ -282,11 +282,19 @@ def _process_symbol(
     breakout_bonus = 0.0
     taker_score_log = 0.0
     oi_breakout_confirmed = False
+    raw_funding_rate_log = 0.0
+    raw_oi_delta_pct_log = 0.0
+    raw_taker_ratio_log = 0.5
+    raw_ls_ratio_log = 1.0
     try:
         onchain_sig = fetch_onchain_signals(symbol)
         if onchain_sig.available:
             onchain_score = onchain_sig.aggregate
             taker_score_log = onchain_sig.taker_score
+            raw_funding_rate_log = onchain_sig.funding_rate
+            raw_oi_delta_pct_log = onchain_sig.oi_change_pct
+            raw_taker_ratio_log = onchain_sig.taker_ratio
+            raw_ls_ratio_log = onchain_sig.ls_ratio
             # Breakout confirmation: directional agreement from OI + taker aggression.
             oi_breakout_confirmed = (
                 onchain_sig.oi_score > 0.2 and onchain_sig.taker_score > 0.2
@@ -372,6 +380,10 @@ def _process_symbol(
                 "taker_score": taker_score_log,
                 "oi_breakout_confirmed": 1 if oi_breakout_confirmed else 0,
                 "breakout_bonus": dbg.get("breakout_bonus", 0.0),
+                "raw_funding_rate": raw_funding_rate_log,
+                "raw_oi_delta_pct": raw_oi_delta_pct_log,
+                "raw_taker_ratio": raw_taker_ratio_log,
+                "raw_ls_ratio": raw_ls_ratio_log,
             })
     except Exception as _log_exc:
         logger.debug("process: signal_log write failed for %s: %s", symbol, _log_exc)
