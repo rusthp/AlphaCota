@@ -140,7 +140,12 @@ CREATE TABLE IF NOT EXISTS crypto_signal_log (
     take_profit           REAL NOT NULL DEFAULT 0.0,
 
     -- Ranging mean-reversion flag
-    ranging_mean_reversion INTEGER NOT NULL DEFAULT 0
+    ranging_mean_reversion INTEGER NOT NULL DEFAULT 0,
+
+    -- Taker buy/sell upgrade fields
+    taker_score            REAL NOT NULL DEFAULT 0.0,
+    oi_breakout_confirmed  INTEGER NOT NULL DEFAULT 0,
+    breakout_bonus         REAL NOT NULL DEFAULT 0.0
 );
 
 CREATE INDEX IF NOT EXISTS idx_csl_timestamp        ON crypto_signal_log(timestamp);
@@ -160,6 +165,19 @@ def _migrate(conn: sqlite3.Connection) -> None:
         logger.info("crypto_ledger: migrated — added crypto_orders.binance_order_id")
     except sqlite3.OperationalError:
         pass
+
+    # Taker upgrade columns — safe no-op if already present.
+    for _col, _ddl in (
+        ("taker_score",           "ALTER TABLE crypto_signal_log ADD COLUMN taker_score REAL NOT NULL DEFAULT 0.0"),
+        ("oi_breakout_confirmed", "ALTER TABLE crypto_signal_log ADD COLUMN oi_breakout_confirmed INTEGER NOT NULL DEFAULT 0"),
+        ("breakout_bonus",        "ALTER TABLE crypto_signal_log ADD COLUMN breakout_bonus REAL NOT NULL DEFAULT 0.0"),
+    ):
+        try:
+            conn.execute(_ddl)
+            conn.commit()
+            logger.info("crypto_ledger: migrated — added crypto_signal_log.%s", _col)
+        except sqlite3.OperationalError:
+            pass
 
     # crypto_signal_log was added in v2 — safe no-op if already exists.
     try:
@@ -558,7 +576,8 @@ def insert_signal_log(conn: sqlite3.Connection, entry: dict) -> None:
                 direction, confidence, would_enter, skip_reason,
                 regime_size_mult, kelly_fraction, position_size_usd,
                 entry_price, stop_loss, take_profit,
-                ranging_mean_reversion
+                ranging_mean_reversion,
+                taker_score, oi_breakout_confirmed, breakout_bonus
             ) VALUES (
                 :event_id, :timestamp, :symbol, :mode,
                 :regime_raw, :regime_confirmed, :regime_persistence,
@@ -571,7 +590,8 @@ def insert_signal_log(conn: sqlite3.Connection, entry: dict) -> None:
                 :direction, :confidence, :would_enter, :skip_reason,
                 :regime_size_mult, :kelly_fraction, :position_size_usd,
                 :entry_price, :stop_loss, :take_profit,
-                :ranging_mean_reversion
+                :ranging_mean_reversion,
+                :taker_score, :oi_breakout_confirmed, :breakout_bonus
             )
             """,
             entry,

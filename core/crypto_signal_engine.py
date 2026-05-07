@@ -657,6 +657,7 @@ def generate_signal(
     htf_candles: list[CryptoCandle] | None = None,
     onchain_score: float = 0.0,
     btc_strength: float = 0.0,
+    breakout_bonus: float = 0.0,
 ) -> CryptoSignal:
     """Produce a CryptoSignal combining technicals, on-chain signals, and news.
 
@@ -725,6 +726,7 @@ def generate_signal(
                 "tech_signed": 0.0, "news_score": news_score, "onchain_score": onchain_score,
                 "btc_strength": btc_strength, "btc_modifier": 1.0,
                 "combined_before_btc": 0.0, "combined_after_btc": 0.0,
+                "breakout_bonus": breakout_bonus,
                 "threshold": _LONG_THRESHOLD, "threshold_reason": "normal",
                 "htf_trend": "neutral", "htf_alignment": 0,
                 "direction": "flat", "confidence": 0.0,
@@ -781,6 +783,11 @@ def generate_signal(
             btc_factor_applied = 1.0 + effective * _BTC_OPPOSE_SCALE
         combined = max(-1.0, min(1.0, combined * btc_factor_applied))
 
+    # Breakout confirmation bonus: directional nudge when OI + taker align.
+    if breakout_bonus != 0.0 and combined != 0.0:
+        sign = 1.0 if combined > 0 else -1.0
+        combined = max(-1.0, min(1.0, combined + sign * abs(breakout_bonus)))
+
     confidence = round(abs(combined), 4)
 
     # Effective threshold: raised for ranging mean-reversion and on-chain override.
@@ -816,6 +823,7 @@ def generate_signal(
             "tech_signed": tech_signed, "news_score": clamped_news, "onchain_score": clamped_onchain,
             "btc_strength": btc_strength, "btc_modifier": btc_factor_applied,
             "combined_before_btc": combined_before_btc, "combined_after_btc": combined,
+            "breakout_bonus": breakout_bonus,
             "threshold": long_thresh, "threshold_reason": (
                 "onchain_override" if onchain_override_active else
                 "ranging_mr" if ranging_mean_reversion else "normal"
@@ -902,6 +910,7 @@ def generate_signal(
         "tech_signed": tech_signed, "news_score": clamped_news, "onchain_score": clamped_onchain,
         "btc_strength": btc_strength, "btc_modifier": btc_factor_applied,
         "combined_before_btc": combined_before_btc, "combined_after_btc": combined,
+        "breakout_bonus": breakout_bonus,
         "threshold": long_thresh, "threshold_reason": (
             "onchain_override" if onchain_override_active else
             "ranging_mr" if ranging_mean_reversion else "normal"

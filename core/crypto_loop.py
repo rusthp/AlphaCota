@@ -279,14 +279,26 @@ def _process_symbol(
     news_score = score_news_sentiment(news_cache, symbol)
 
     onchain_score = 0.0
+    breakout_bonus = 0.0
+    taker_score_log = 0.0
+    oi_breakout_confirmed = False
     try:
         onchain_sig = fetch_onchain_signals(symbol)
         if onchain_sig.available:
             onchain_score = onchain_sig.aggregate
+            taker_score_log = onchain_sig.taker_score
+            # Breakout confirmation: directional agreement from OI + taker aggression.
+            oi_breakout_confirmed = (
+                onchain_sig.oi_score > 0.2 and onchain_sig.taker_score > 0.2
+            )
+            if oi_breakout_confirmed:
+                breakout_bonus = 0.05
             logger.debug(
-                "process: %s onchain agg=%.3f (funding=%.3f oi=%.3f ls=%.3f)",
+                "process: %s onchain agg=%.3f (funding=%.3f oi=%.3f taker=%.3f ls=%.3f) breakout=%s",
                 symbol, onchain_score,
-                onchain_sig.funding_score, onchain_sig.oi_score, onchain_sig.ls_score,
+                onchain_sig.funding_score, onchain_sig.oi_score,
+                onchain_sig.taker_score, onchain_sig.ls_score,
+                oi_breakout_confirmed,
             )
     except Exception as exc:
         logger.debug("process: onchain(%s) failed: %s — using 0.0", symbol, exc)
@@ -315,6 +327,7 @@ def _process_symbol(
         htf_candles=htf_candles,
         onchain_score=onchain_score,
         btc_strength=0.0 if symbol == "BTCUSDT" else btc_strength,
+        breakout_bonus=breakout_bonus,
     )
 
     # --- Observability: persist every signal decision to the analytics log ---
@@ -356,6 +369,9 @@ def _process_symbol(
                 "stop_loss": dbg.get("stop_loss", 0.0),
                 "take_profit": dbg.get("take_profit", 0.0),
                 "ranging_mean_reversion": 1 if dbg.get("ranging_mean_reversion") else 0,
+                "taker_score": taker_score_log,
+                "oi_breakout_confirmed": 1 if oi_breakout_confirmed else 0,
+                "breakout_bonus": dbg.get("breakout_bonus", 0.0),
             })
     except Exception as _log_exc:
         logger.debug("process: signal_log write failed for %s: %s", symbol, _log_exc)
