@@ -14,3 +14,8 @@
 .pm-actual-bar {
   width: var(--pm-width, 0%);
 }
+
+.pm-score-bar {
+  width: var(--pm-width, 0%);
+  background-color: var(--pm-color);
+}

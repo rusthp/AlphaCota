@@ -1650,6 +1650,90 @@ def polymarket_calibration(lookback_days: int = 90):
     }
 
 
+@app.get("/api/polymarket/backtest")
+def polymarket_backtest(
+    lookback_days: int = 30,
+    min_volume_usd: float = 10_000,
+    min_score: float = 50.0,
+    bankroll_usd: float = 1_000.0,
+    max_position_usd: float = 50.0,
+    max_markets: int = 50,
+    use_ai: bool = False,
+):
+    """Run a historical backtest on resolved Polymarket binary markets.
+
+    Fetches resolved markets from Gamma API within lookback_days, reconstructs
+    entry prices from CLOB price history (~14 days before resolution), scores
+    each market with the live engine, and simulates entries above min_score.
+
+    Query params:
+        lookback_days: Days of resolved markets to analyse (default 30, max 90).
+        min_volume_usd: Min lifetime volume to include a market (default $10 k).
+        min_score: Composite score threshold for simulated entry (default 50).
+        bankroll_usd: Starting bankroll for sizing (default $1 000).
+        max_position_usd: Hard cap per position (default $50).
+        max_markets: Max markets to evaluate — limits CLOB API calls (default 50).
+        use_ai: Whether to call the LLM for edge estimation (default false).
+    """
+    from core.polymarket_backtest import run_backtest
+    from dataclasses import asdict
+
+    lookback_days = min(max(lookback_days, 7), 90)
+    max_markets = min(max(max_markets, 5), 100)
+
+    try:
+        result = run_backtest(
+            lookback_days=lookback_days,
+            min_volume_usd=min_volume_usd,
+            min_score=min_score,
+            bankroll_usd=bankroll_usd,
+            max_position_usd=max_position_usd,
+            max_markets=max_markets,
+            use_ai=use_ai,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return {
+        "summary": {
+            "lookback_days": result.lookback_days,
+            "min_score": result.min_score,
+            "bankroll_usd": result.bankroll_usd,
+            "markets_evaluated": result.markets_evaluated,
+            "markets_traded": result.markets_traded,
+            "wins": result.wins,
+            "win_rate": result.win_rate,
+            "total_pnl_usd": result.total_pnl_usd,
+            "roi_pct": result.roi_pct,
+            "max_drawdown_pct": result.max_drawdown_pct,
+            "sharpe_ratio": result.sharpe_ratio,
+            "avg_score": result.avg_score,
+            "use_ai": result.use_ai,
+            "errors": result.errors,
+            "duration_seconds": result.duration_seconds,
+        },
+        "equity_curve": result.equity_curve,
+        "by_category": result.by_category,
+        "trades": [
+            {
+                "condition_id": t.condition_id,
+                "question": t.question,
+                "category": t.category,
+                "entry_price": t.entry_price,
+                "direction": t.direction,
+                "size_usd": t.size_usd,
+                "score": t.score,
+                "resolved_yes": t.resolved_yes,
+                "pnl_usd": t.pnl_usd,
+                "entry_days_before_end": t.entry_days_before_end,
+                "roi_pct": t.roi_pct,
+                "score_components": t.score_components,
+            }
+            for t in result.trades
+        ],
+    }
+
+
 @app.get("/api/polymarket/wallets")
 def polymarket_wallets():
     """Return ranked wallet list with alpha scores and rank changes."""

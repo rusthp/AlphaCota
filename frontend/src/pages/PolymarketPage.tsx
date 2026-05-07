@@ -41,6 +41,15 @@ function PmChartLabel({ color, children }: { color: string; children: React.Reac
   return <span ref={ref} className="pm-chart-label">{children}</span>;
 }
 
+function PmScoreBar({ val, color }: { val: number; color: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    ref.current?.style.setProperty("--pm-width", `${val}%`);
+    ref.current?.style.setProperty("--pm-color", color);
+  }, [val, color]);
+  return <div ref={ref} className="pm-score-bar absolute h-1.5 rounded-full" />;
+}
+
 // ---------------------------------------------------------------------------
 // API helpers
 // ---------------------------------------------------------------------------
@@ -148,6 +157,52 @@ interface Calibration {
   total_resolved: number;
   lookback_days: number;
   reliability_bins: CalibrationBin[];
+}
+
+interface BacktestTrade {
+  condition_id: string;
+  question: string;
+  category: string;
+  entry_price: number;
+  direction: string;
+  size_usd: number;
+  score: number;
+  resolved_yes: boolean;
+  pnl_usd: number;
+  entry_days_before_end: number;
+  roi_pct: number;
+  score_components: {
+    edge: number;
+    liquidity: number;
+    time_decay: number;
+    copy_signal: number;
+    news: number;
+  };
+}
+
+interface BacktestSummary {
+  lookback_days: number;
+  min_score: number;
+  bankroll_usd: number;
+  markets_evaluated: number;
+  markets_traded: number;
+  wins: number;
+  win_rate: number;
+  total_pnl_usd: number;
+  roi_pct: number;
+  max_drawdown_pct: number;
+  sharpe_ratio: number;
+  avg_score: number;
+  use_ai: boolean;
+  errors: number;
+  duration_seconds: number;
+}
+
+interface BacktestResult {
+  summary: BacktestSummary;
+  equity_curve: { trade: number; equity: number; question: string }[];
+  by_category: { category: string; trades: number; wins: number; win_rate: number; total_pnl_usd: number }[];
+  trades: BacktestTrade[];
 }
 
 // ---------------------------------------------------------------------------
@@ -917,6 +972,331 @@ function CalibrationPanel({ cal }: { cal: Calibration }) {
 }
 
 // ---------------------------------------------------------------------------
+// Backtest panel
+// ---------------------------------------------------------------------------
+
+function BacktestPanel() {
+  const [lookback, setLookback] = useState(30);
+  const [minScore, setMinScore] = useState(50);
+  const [bankroll, setBankroll] = useState(1000);
+  const [maxMarkets, setMaxMarkets] = useState(50);
+  const [useAi, setUseAi] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<BacktestResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedTrade, setSelectedTrade] = useState<BacktestTrade | null>(null);
+
+  async function runBacktest() {
+    setRunning(true);
+    setError(null);
+    setResult(null);
+    try {
+      const params = new URLSearchParams({
+        lookback_days: String(lookback),
+        min_score: String(minScore),
+        bankroll_usd: String(bankroll),
+        max_markets: String(maxMarkets),
+        use_ai: String(useAi),
+      });
+      const data = await fetchJSON<BacktestResult>(`/api/polymarket/backtest?${params}`);
+      setResult(data);
+    } catch (e: any) {
+      setError(e.message || "Erro ao executar backtest");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  const s = result?.summary;
+  const isProfit = (s?.total_pnl_usd ?? 0) >= 0;
+  const equityColor = isProfit ? "#22c55e" : "#ef4444";
+
+  const BtTooltip = ({ active, payload }: any) => {
+    if (!active || !payload?.length) return null;
+    const d = payload[0].payload;
+    return (
+      <div className="bg-popover border border-border rounded px-3 py-2 text-xs shadow-lg max-w-xs">
+        <div className="font-medium mb-1">Trade #{d.trade}</div>
+        <div className="text-muted-foreground truncate">{d.question}</div>
+        <div className="flex justify-between gap-4 mt-1">
+          <span className="text-muted-foreground">Saldo</span>
+          <span className="font-mono">${d.equity.toFixed(2)}</span>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Controls */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <BarChart2 className="w-4 h-4" /> Parâmetros do backtest
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
+            {/* Lookback */}
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">Período (dias)</label>
+              <div className="flex gap-1 flex-wrap">
+                {[7, 14, 30, 60, 90].map(v => (
+                  <button type="button" key={v} onClick={() => setLookback(v)}
+                    className={`text-xs px-2 py-1 rounded ${lookback === v ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}>
+                    {v}d
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* Min score */}
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">Score mínimo</label>
+              <div className="flex gap-1 flex-wrap">
+                {[40, 50, 60, 70].map(v => (
+                  <button type="button" key={v} onClick={() => setMinScore(v)}
+                    className={`text-xs px-2 py-1 rounded ${minScore === v ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}>
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* Bankroll */}
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">Banca inicial</label>
+              <div className="flex gap-1 flex-wrap">
+                {[250, 500, 1000, 2500].map(v => (
+                  <button type="button" key={v} onClick={() => setBankroll(v)}
+                    className={`text-xs px-2 py-1 rounded ${bankroll === v ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}>
+                    ${v}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* Max markets */}
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">Mercados máx.</label>
+              <div className="flex gap-1 flex-wrap">
+                {[20, 50, 75, 100].map(v => (
+                  <button type="button" key={v} onClick={() => setMaxMarkets(v)}
+                    className={`text-xs px-2 py-1 rounded ${maxMarkets === v ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}>
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* AI toggle */}
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">IA (edge LLM)</label>
+              <div className="flex gap-1">
+                <button type="button" onClick={() => setUseAi(false)}
+                  className={`text-xs px-3 py-1 rounded ${!useAi ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}>
+                  Sem IA
+                </button>
+                <button type="button" onClick={() => setUseAi(true)}
+                  className={`text-xs px-3 py-1 rounded ${useAi ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}>
+                  Com IA
+                </button>
+              </div>
+              {useAi && <p className="text-[10px] text-yellow-400 mt-1">Lento — 1 chamada LLM/mercado</p>}
+            </div>
+          </div>
+          <Button onClick={runBacktest} disabled={running} size="sm">
+            {running ? <><RefreshCw className="w-3 h-3 mr-1 animate-spin" />Rodando ({maxMarkets} mercados)…</> : <><Activity className="w-3 h-3 mr-1" />Executar backtest</>}
+          </Button>
+          {error && <p className="text-destructive text-xs mt-2">{error}</p>}
+        </CardContent>
+      </Card>
+
+      {/* Results */}
+      {result && s && (
+        <>
+          {/* Summary cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              { label: "Mercados avaliados", value: String(s.markets_evaluated), sub: `${s.markets_traded} entradas`, color: "text-foreground" },
+              { label: "Win Rate", value: `${(s.win_rate * 100).toFixed(1)}%`, sub: `${s.wins}/${s.markets_traded} ganhos`, color: s.win_rate >= 0.55 ? "text-green-400" : s.win_rate < 0.45 ? "text-red-400" : "text-yellow-400" },
+              { label: "ROI total", value: `${s.roi_pct >= 0 ? "+" : ""}${s.roi_pct.toFixed(1)}%`, sub: `$${s.total_pnl_usd >= 0 ? "+" : ""}${s.total_pnl_usd.toFixed(2)}`, color: s.roi_pct >= 0 ? "text-green-400" : "text-red-400" },
+              { label: "Max Drawdown", value: `${s.max_drawdown_pct.toFixed(1)}%`, sub: `Sharpe ${s.sharpe_ratio.toFixed(2)}`, color: s.max_drawdown_pct > 20 ? "text-red-400" : "text-foreground" },
+            ].map(card => (
+              <Card key={card.label}>
+                <CardContent className="pt-4">
+                  <div className="text-muted-foreground text-xs mb-1">{card.label}</div>
+                  <div className={`text-xl font-bold ${card.color}`}>{card.value}</div>
+                  <div className="text-muted-foreground text-[11px] mt-0.5">{card.sub}</div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          {/* Equity curve */}
+          {result.equity_curve.length > 1 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Curva de capital — {lookback}d lookback · score≥{minScore} · ${bankroll} banca</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="h-52">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={result.equity_curve} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="btGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor={equityColor} stopOpacity={0.25} />
+                          <stop offset="95%" stopColor={equityColor} stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                      <XAxis dataKey="trade" tick={{ fontSize: 10, fill: "#888" }} tickLine={false} axisLine={false} label={{ value: "trade #", position: "insideBottom", offset: -2, fontSize: 9, fill: "#666" }} />
+                      <YAxis tick={{ fontSize: 10, fill: "#888" }} tickLine={false} axisLine={false} tickFormatter={v => `$${v}`} width={58} />
+                      <Tooltip content={<BtTooltip />} />
+                      <ReferenceLine y={bankroll} stroke="rgba(255,255,255,0.15)" strokeDasharray="4 4" />
+                      <Area type="monotone" dataKey="equity" stroke={equityColor} strokeWidth={2} fill="url(#btGrad)" dot={false} activeDot={{ r: 4, fill: equityColor }} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Category breakdown */}
+            {result.by_category.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">Por categoria</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {result.by_category.map(c => (
+                      <div key={c.category} className="flex items-center gap-2 text-xs">
+                        <span className="w-28 truncate text-muted-foreground">{c.category}</span>
+                        <span className="w-12 text-right">{c.trades} op.</span>
+                        <span className={`w-14 text-right ${c.win_rate >= 0.55 ? "text-green-400" : c.win_rate < 0.45 ? "text-red-400" : "text-yellow-400"}`}>
+                          {(c.win_rate * 100).toFixed(0)}%
+                        </span>
+                        <span className={`ml-auto font-mono ${c.total_pnl_usd >= 0 ? "text-green-400" : "text-red-400"}`}>
+                          {c.total_pnl_usd >= 0 ? "+" : ""}${c.total_pnl_usd.toFixed(2)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Score breakdown of traded markets */}
+            {result.trades.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">Score médio por dimensão</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {(() => {
+                    const n = result.trades.length;
+                    const avg = (fn: (t: BacktestTrade) => number) =>
+                      result.trades.reduce((a, t) => a + fn(t), 0) / n;
+                    const dims = [
+                      { label: "Edge (IA)", val: avg(t => t.score_components.edge), color: "#3b82f6" },
+                      { label: "Liquidez", val: avg(t => t.score_components.liquidity), color: "#22c55e" },
+                      { label: "Tempo", val: avg(t => t.score_components.time_decay), color: "#f97316" },
+                      { label: "Copy", val: avg(t => t.score_components.copy_signal), color: "#a855f7" },
+                      { label: "Notícias", val: avg(t => t.score_components.news), color: "#eab308" },
+                    ];
+                    return (
+                      <div className="space-y-2">
+                        {dims.map(d => (
+                          <div key={d.label} className="flex items-center gap-2 text-xs">
+                            <span className="w-16 text-muted-foreground">{d.label}</span>
+                            <div className="flex-1 bg-muted rounded-full h-1.5 relative overflow-hidden">
+                              <PmScoreBar val={d.val} color={d.color} />
+                            </div>
+                            <span className="w-8 text-right font-mono">{d.val.toFixed(0)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </CardContent>
+              </Card>
+            )}
+          </div>
+
+          {/* Trade list */}
+          {result.trades.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Operações simuladas ({result.trades.length})</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-border/30 text-muted-foreground">
+                        <th className="text-left py-2 px-4 font-normal">Mercado</th>
+                        <th className="text-center py-2 px-2 font-normal">Dir.</th>
+                        <th className="text-right py-2 px-2 font-normal">Entrada</th>
+                        <th className="text-center py-2 px-2 font-normal">Resultado</th>
+                        <th className="text-right py-2 px-2 font-normal">Score</th>
+                        <th className="text-right py-2 px-4 font-normal">PnL</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {result.trades.map((t, i) => (
+                        <tr key={i}
+                          className="border-b border-border/10 hover:bg-muted/20 cursor-pointer"
+                          onClick={() => setSelectedTrade(selectedTrade?.condition_id === t.condition_id ? null : t)}>
+                          <td className="py-2 px-4">
+                            <div className="truncate max-w-xs">{t.question}</div>
+                            <div className="text-muted-foreground text-[10px]">{t.category} · {t.entry_days_before_end.toFixed(0)}d antes</div>
+                            {selectedTrade?.condition_id === t.condition_id && (
+                              <div className="mt-1 flex gap-3 text-[10px] text-muted-foreground flex-wrap">
+                                {Object.entries(t.score_components).map(([k, v]) => (
+                                  <span key={k}>{k}: <span className="text-foreground">{(v as number).toFixed(0)}</span></span>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-2 px-2 text-center">
+                            <Badge className={`text-[10px] ${t.direction === "yes" ? "bg-green-600/20 text-green-400 border-green-600/30" : "bg-red-600/20 text-red-400 border-red-600/30"}`}>
+                              {t.direction.toUpperCase()}
+                            </Badge>
+                          </td>
+                          <td className="py-2 px-2 text-right font-mono">{(t.entry_price * 100).toFixed(1)}%</td>
+                          <td className="py-2 px-2 text-center">
+                            <Badge className={`text-[10px] ${t.resolved_yes ? "bg-blue-600/20 text-blue-400 border-blue-600/30" : "bg-muted text-muted-foreground"}`}>
+                              {t.resolved_yes ? "SIM" : "NÃO"}
+                            </Badge>
+                          </td>
+                          <td className="py-2 px-2 text-right font-mono text-muted-foreground">{t.score.toFixed(0)}</td>
+                          <td className={`py-2 px-4 text-right font-mono font-medium ${t.pnl_usd >= 0 ? "text-green-400" : "text-red-400"}`}>
+                            {t.pnl_usd >= 0 ? "+" : ""}${t.pnl_usd.toFixed(2)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {result.trades.length === 0 && (
+            <div className="text-center text-muted-foreground py-8 text-sm">
+              Nenhum mercado passou o score mínimo de {minScore}. Tente reduzir o threshold.
+            </div>
+          )}
+
+          <div className="text-right text-xs text-muted-foreground">
+            {s.markets_evaluated} mercados avaliados · {s.errors} erros · executado em {s.duration_seconds.toFixed(1)}s
+            {s.use_ai && <span className="ml-2 text-yellow-400"> · com IA</span>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
 
@@ -1074,6 +1454,7 @@ export default function PolymarketPage() {
               <TabsTrigger value="pnl">PnL</TabsTrigger>
               <TabsTrigger value="wallets">Copiar</TabsTrigger>
               <TabsTrigger value="calibration">Calibração</TabsTrigger>
+              <TabsTrigger value="backtest">Backtest</TabsTrigger>
             </TabsList>
 
             <TabsContent value="overview">
@@ -1171,6 +1552,20 @@ export default function PolymarketPage() {
                 </CardHeader>
                 <CardContent>
                   {calQ.data ? <CalibrationPanel cal={calQ.data} /> : <div className="text-muted-foreground text-center py-8">Sem dados de calibração ainda</div>}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="backtest">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <BarChart2 className="w-4 h-4" /> Backtesting histórico
+                    <span className="text-xs font-normal text-muted-foreground ml-1">mercados resolvidos · entrada ~14d antes da resolução</span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <BacktestPanel />
                 </CardContent>
               </Card>
             </TabsContent>
