@@ -2105,17 +2105,21 @@ def crypto_loop_start():
     # Windows requires DETACHED_PROCESS + CREATE_NEW_PROCESS_GROUP to truly
     # decouple the child from the parent's console / process group.
     # On Unix, start_new_session=True calls setsid() which is the correct equivalent.
+    cmd = [_sys.executable, "-m", "core.crypto_loop", "--mode", mode]
     if _os.name == "nt":
-        kwargs = {"creationflags": _sp.CREATE_NEW_PROCESS_GROUP | _sp.DETACHED_PROCESS}
+        proc = _sp.Popen(
+            cmd,
+            stdout=_sp.DEVNULL,
+            stderr=_sp.DEVNULL,
+            creationflags=_sp.CREATE_NEW_PROCESS_GROUP | _sp.DETACHED_PROCESS,
+        )
     else:
-        kwargs = {"start_new_session": True}
-
-    proc = _sp.Popen(
-        [_sys.executable, "-m", "core.crypto_loop", "--mode", mode],
-        stdout=_sp.DEVNULL,
-        stderr=_sp.DEVNULL,
-        **kwargs,
-    )
+        proc = _sp.Popen(
+            cmd,
+            stdout=_sp.DEVNULL,
+            stderr=_sp.DEVNULL,
+            start_new_session=True,
+        )
     _Path(_PID_FILE).parent.mkdir(parents=True, exist_ok=True)
     _Path(_PID_FILE).write_text(str(proc.pid))
     return {"running": True, "pid": proc.pid, "message": f"Loop started in {mode} mode (PID {proc.pid})"}
