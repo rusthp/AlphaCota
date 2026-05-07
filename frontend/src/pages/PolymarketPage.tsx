@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useLayoutEffect, useRef, useState } from "react";
 import "./PolymarketPage.css";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,6 +15,31 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, LineChart, Line, Legend,
 } from "recharts";
+
+// ---------------------------------------------------------------------------
+// Ref-based CSS-variable components (avoids style={} prop)
+// ---------------------------------------------------------------------------
+
+function PmDynBar({ pct, className }: { pct: number; className: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => { ref.current?.style.setProperty("--pm-width", `${pct}%`); }, [pct]);
+  return <div ref={ref} className={className} />;
+}
+
+function PmOutcomeBadge({ color, children }: { color: string; children: React.ReactNode }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    ref.current?.style.setProperty("--pm-color", color);
+    ref.current?.style.setProperty("--pm-bg-color", color + "22");
+  }, [color]);
+  return <span ref={ref} className="pm-outcome-badge text-xs px-2 py-0.5 rounded-full font-medium flex items-center gap-1">{children}</span>;
+}
+
+function PmChartLabel({ color, children }: { color: string; children: React.ReactNode }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => { ref.current?.style.setProperty("--pm-color", color); }, [color]);
+  return <span ref={ref} className="pm-chart-label">{children}</span>;
+}
 
 // ---------------------------------------------------------------------------
 // API helpers
@@ -431,7 +456,7 @@ function MarketPriceCard({ conditionId }: { conditionId: string }) {
         <div className="font-medium text-muted-foreground">{dateStr}</div>
         {payload.map((p: any) => (
           <div key={p.dataKey} className="flex justify-between gap-4">
-            <span className="pm-chart-label" style={{ "--pm-color": p.color } as React.CSSProperties}>{p.dataKey}</span>
+            <PmChartLabel color={p.color}>{p.dataKey}</PmChartLabel>
             <span className="font-mono font-medium">{p.value?.toFixed(1)}%</span>
           </div>
         ))}
@@ -475,16 +500,12 @@ function MarketPriceCard({ conditionId }: { conditionId: string }) {
               const lastPoint = data.series.length > 0 ? data.series[data.series.length - 1] : null;
               const currentPct = lastPoint ? (lastPoint as Record<string, number>)[o] : null;
               return (
-                <span
-                  key={o}
-                  className="pm-outcome-badge text-xs px-2 py-0.5 rounded-full font-medium flex items-center gap-1"
-                  style={{ "--pm-color": OUTCOME_COLORS[i % OUTCOME_COLORS.length], "--pm-bg-color": OUTCOME_COLORS[i % OUTCOME_COLORS.length] + "22" } as React.CSSProperties}
-                >
+                <PmOutcomeBadge key={o} color={OUTCOME_COLORS[i % OUTCOME_COLORS.length]}>
                   {o}
                   {currentPct !== null && (
                     <span className="font-mono font-bold">{currentPct.toFixed(1)}%</span>
                   )}
-                </span>
+                </PmOutcomeBadge>
               );
             })}
             {/* For binary markets only the primary outcome is shown — note the implied complement */}
@@ -493,10 +514,9 @@ function MarketPriceCard({ conditionId }: { conditionId: string }) {
               const primaryPct = last[data.outcomes[0]] ?? 0;
               const complementPct = Math.max(0, 100 - primaryPct);
               return (
-                <span className="pm-outcome-badge text-xs px-2 py-0.5 rounded-full font-medium flex items-center gap-1"
-                  style={{ "--pm-color": OUTCOME_COLORS[1], "--pm-bg-color": OUTCOME_COLORS[1] + "22" } as React.CSSProperties}>
+                <PmOutcomeBadge color={OUTCOME_COLORS[1]}>
                   No <span className="font-mono font-bold">{complementPct.toFixed(1)}%</span>
-                </span>
+                </PmOutcomeBadge>
               );
             })()}
           </div>
@@ -879,8 +899,8 @@ function CalibrationPanel({ cal }: { cal: Calibration }) {
               <div key={i} className="flex items-center gap-3 text-xs">
                 <span className="w-20 text-muted-foreground">{(b.bin_low * 100).toFixed(0)}-{(b.bin_high * 100).toFixed(0)}%</span>
                 <div className="flex-1 bg-muted rounded-full h-2 relative">
-                  <div className="pm-predicted-bar absolute h-2 bg-blue-500/60 rounded-full" style={{ "--pm-width": `${b.predicted_prob * 100}%` } as React.CSSProperties} />
-                  <div className="pm-actual-bar absolute h-2 bg-green-500 rounded-full opacity-70" style={{ "--pm-width": `${b.actual_win_rate * 100}%` } as React.CSSProperties} />
+                  <PmDynBar pct={b.predicted_prob * 100} className="pm-predicted-bar absolute h-2 bg-blue-500/60 rounded-full" />
+                  <PmDynBar pct={b.actual_win_rate * 100} className="pm-actual-bar absolute h-2 bg-green-500 rounded-full opacity-70" />
                 </div>
                 <span className="w-24 text-right text-muted-foreground">{b.count} mercados</span>
               </div>

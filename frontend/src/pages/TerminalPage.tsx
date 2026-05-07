@@ -10,6 +10,9 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+} from "recharts";
 import "./TerminalPage.css";
 
 function BarFill({ pct, className }: { pct: number; className: string }) {
@@ -97,6 +100,8 @@ interface BotStatus { running: boolean; mode: string; kill_switch_active: boolea
 interface TrendingMarket { condition_id: string; question: string; volume_1wk: number; outcomes: string[]; prices: number[]; }
 interface PolyOrder { order_id: string; market_id: string; question: string; direction: string; size_usd: number; fill_price: number | null; status: string; mode: string; created_at: number; }
 interface PolyCalibration { overall_brier: number; overall_win_rate: number; total_resolved: number; lookback_days: number; categories: { category: string; brier_score: number; win_rate: number; mean_edge: number; resolved_count: number }[]; }
+interface PriceHistorySeries { ts: number; [outcome: string]: number; }
+interface PriceHistoryData { series: PriceHistorySeries[]; outcomes: string[]; }
 
 // ---------------------------------------------------------------------------
 // Types — Crypto
@@ -158,14 +163,17 @@ function PositionRow({ pos }: { pos: Position }) {
   );
 }
 
-function MarketRow({ mkt, idx }: { mkt: TrendingMarket; idx: number }) {
+function MarketRow({ mkt, idx, selected, onClick }: { mkt: TrendingMarket; idx: number; selected?: boolean; onClick?: () => void }) {
   const price = mkt.prices[0] ?? 0;
   const priceColor = price >= 70 ? "text-[#00ff88]" : price >= 40 ? "text-[#ffcc00]" : "text-[#ff4444]";
   const short = mkt.question.length > 32 ? mkt.question.slice(0, 31) + "…" : mkt.question;
   return (
-    <div className="flex items-center gap-2 text-[10px] font-mono leading-5">
+    <div
+      className={`flex items-center gap-2 text-[10px] font-mono leading-5 cursor-pointer rounded px-0.5 transition-colors ${selected ? "bg-[#1a2a3a]" : "hover:bg-[#0d1a24]"}`}
+      onClick={onClick}
+    >
       <span className="text-[#4a5568] w-4">{String(idx + 1).padStart(2)}.</span>
-      <span className="text-[#aaa] w-[210px] truncate">{short}</span>
+      <span className={`w-[210px] truncate ${selected ? "text-[#4a9eff]" : "text-[#aaa]"}`}>{short}</span>
       <span className={`w-8 font-bold ${priceColor}`}>{price.toFixed(0)}%</span>
       <span className="text-[#2a4a2a] w-[90px] font-mono text-[8px] leading-5">{bar(price, 14)}</span>
       <span className="text-[#4a5568] w-12 text-right">{fmtVol(mkt.volume_1wk)}</span>
@@ -498,6 +506,48 @@ function TradingViewChart({ symbol, interval }: { symbol: string; interval: stri
 // Main page
 // ---------------------------------------------------------------------------
 
+const POLY_COLORS = ["#4a9eff", "#ff9900", "#00ff88", "#ff4444", "#cc88ff", "#ffcc00"];
+
+function PolyChart({ data, question, loading }: { data: PriceHistoryData | undefined; question: string; loading: boolean }) {
+  if (loading) return <div className="flex items-center justify-center h-full text-[#4a5568] text-[9px]">carregando…</div>;
+  if (!data || data.series.length === 0) return <div className="flex items-center justify-center h-full text-[#2a3a2a] text-[9px]">sem histórico de preços</div>;
+
+  const formatted = data.series.map((p) => ({
+    ...p,
+    _date: new Date(p.ts * 1000).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }),
+  }));
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="text-[9px] text-[#4a5568] px-2 pt-1 truncate">{question}</div>
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={formatted} margin={{ top: 4, right: 8, bottom: 4, left: -20 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#0d1a24" />
+          <XAxis dataKey="_date" tick={{ fontSize: 8, fill: "#4a5568" }} interval="preserveStartEnd" />
+          <YAxis domain={[0, 100]} tick={{ fontSize: 8, fill: "#4a5568" }} tickFormatter={(v) => `${v}%`} />
+          <Tooltip
+            contentStyle={{ background: "#0a1520", border: "1px solid #1a2a3a", fontSize: 9 }}
+            formatter={(v: number) => [`${v.toFixed(1)}%`]}
+            labelStyle={{ color: "#4a7a9a", fontSize: 8 }}
+          />
+          <Legend wrapperStyle={{ fontSize: 8, color: "#4a5568" }} />
+          {data.outcomes.map((o, i) => (
+            <Line
+              key={o}
+              type="monotone"
+              dataKey={o}
+              stroke={POLY_COLORS[i % POLY_COLORS.length]}
+              dot={false}
+              strokeWidth={1.5}
+              connectNulls
+            />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 type TermMode = "poly" | "crypto";
 
 const CHART_INTERVALS = ["1", "5", "15", "60", "240", "D"] as const;
@@ -511,6 +561,7 @@ export default function TerminalPage() {
   const [chartSymbol, setChartSymbol] = useState("BTCUSDT");
   const [chartInterval, setChartInterval] = useState("15");
   const [autoMode, setAutoMode] = useState(false);
+  const [selectedMarket, setSelectedMarket] = useState<TrendingMarket | null>(null);
   const [logs, setLogs] = useState<{ ts: string; msg: string; level: "info" | "ok" | "warn" | "err" }[]>([
     { ts: new Date().toLocaleTimeString("pt-BR"), msg: "AlphaCota Terminal iniciado", level: "info" },
   ]);
@@ -566,6 +617,12 @@ export default function TerminalPage() {
     queryFn: () => API("/api/polymarket/calibration?lookback_days=30"),
     staleTime: 300_000, refetchInterval: 300_000,
     enabled: termMode === "poly",
+  });
+  const polyPriceHistQ = useQuery<PriceHistoryData>({
+    queryKey: ["term-poly-hist", selectedMarket?.condition_id],
+    queryFn: () => API(`/api/polymarket/price-history/${selectedMarket!.condition_id}?interval=1w`),
+    staleTime: 120_000, refetchInterval: 120_000,
+    enabled: termMode === "poly" && selectedMarket != null,
   });
 
   // ── Crypto queries ────────────────────────────────────────────────────────
@@ -639,6 +696,12 @@ export default function TerminalPage() {
       pushLog(`Crypto — saldo: $${d.balance_usd.toFixed(2)} | pos: ${d.open_positions}`, "info");
     }
   }, [cryptoStatusQ.dataUpdatedAt]);
+
+  // Auto-select first market when markets load (first time only)
+  useEffect(() => {
+    const mkts = trendingQ.data?.markets ?? [];
+    if (mkts.length > 0 && selectedMarket == null) setSelectedMarket(mkts[0]);
+  }, [trendingQ.data]);
 
   // Sync chart symbol when decomp loads (first time only)
   useEffect(() => {
@@ -1005,6 +1068,40 @@ export default function TerminalPage() {
           {termMode === "poly" ? (
             /* ── POLYMARKET RIGHT ── */
             <>
+              {/* Probability chart — top section */}
+              <div className="terminal-chart-area flex flex-col border-b border-[#1a2a3a] bg-[#060d14]">
+                <div className="flex items-center gap-1 px-2 py-1 bg-[#0a1520] border-b border-[#1a2a3a] flex-shrink-0 overflow-x-auto">
+                  <span className="text-[#4a5568] text-[9px] mr-1 flex-shrink-0">MERCADO:</span>
+                  {markets.slice(0, 8).map((m) => (
+                    <button
+                      key={m.condition_id}
+                      type="button"
+                      onClick={() => setSelectedMarket(m)}
+                      className={`px-1.5 py-0 text-[9px] font-bold rounded border transition-colors flex-shrink-0 ${
+                        selectedMarket?.condition_id === m.condition_id
+                          ? "bg-[#1a3a5a] border-[#4a9eff] text-[#4a9eff]"
+                          : "bg-transparent border-[#1a2a3a] text-[#4a5568] hover:text-[#aaa]"
+                      }`}
+                      title={m.question}
+                    >
+                      {m.question.slice(0, 14)}…
+                    </button>
+                  ))}
+                  {selectedMarket && (
+                    <span className="ml-auto text-[9px] text-[#4a5568] flex-shrink-0">
+                      {fmtVol(selectedMarket.volume_1wk)}/sem · {selectedMarket.prices[0]?.toFixed(1) ?? "—"}%
+                    </span>
+                  )}
+                </div>
+                <div className="flex-1 min-h-0">
+                  <PolyChart
+                    data={polyPriceHistQ.data}
+                    question={selectedMarket?.question ?? ""}
+                    loading={polyPriceHistQ.isFetching && !polyPriceHistQ.data}
+                  />
+                </div>
+              </div>
+
               {/* Markets + calibration sidebar */}
               <div className="flex flex-1 overflow-hidden min-h-0">
                 {/* Markets list */}
@@ -1015,7 +1112,15 @@ export default function TerminalPage() {
                     <span className="w-8 text-right">PROB</span><span className="w-[90px] ml-1">BARRA</span>
                     <span className="w-12 text-right">VOL/SEM</span>
                   </div>
-                  {markets.map((m, i) => <MarketRow key={m.condition_id} mkt={m} idx={i} />)}
+                  {markets.map((m, i) => (
+                    <MarketRow
+                      key={m.condition_id}
+                      mkt={m}
+                      idx={i}
+                      selected={selectedMarket?.condition_id === m.condition_id}
+                      onClick={() => setSelectedMarket(m)}
+                    />
+                  ))}
                 </div>
 
                 {/* Calibration + loop stats sidebar */}
