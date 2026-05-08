@@ -28,7 +28,7 @@ export default function MomentumPage() {
   }
 
   const ranking = data?.ranking || [];
-  const maxScore = Math.max(...ranking.map((r) => r.score), 1);
+  const maxScore = ranking.length > 0 ? Math.max(...ranking.map((r) => r.score)) : 1;
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">
