@@ -302,6 +302,7 @@ const SimulatorPage = () => {
           {scenario && (
             <button
               onClick={() => setScenario(null)}
+              aria-label="Limpar cenário"
               className="px-2 py-1 rounded-lg text-xs font-mono text-muted-foreground hover:text-foreground border border-border/50"
             >
               <RefreshCw className="w-3 h-3" />
@@ -516,7 +517,7 @@ const SimulatorPage = () => {
           {!useMC ? (
              <>
                <div className="flex items-center gap-2"><div className="w-3 h-0.5 bg-primary rounded" /> Patrimônio nominal</div>
-               <div className="flex items-center gap-2"><div className="w-3 h-0.5 bg-blue-400 rounded border-dashed" style={{ borderTop: "2px dashed" }} /> Patrimônio real (inflação {inflation}%)</div>
+               <div className="flex items-center gap-2"><div className="w-3 h-0 border-t-2 border-dashed border-blue-400" /> Patrimônio real (inflação {inflation}%)</div>
              </>
           ) : (
              <>
