@@ -1,12 +1,15 @@
 """
 data/universe.py
 
-Universo dinâmico de FIIs brasileiros.
+Universo de FIIs brasileiros — leitura dinâmica com fallback estático.
 
-Mantém a lista dos principais FIIs negociados na B3, classificados por setor,
-com metadados de liquidez mínima e status no IFIX.
+Prioridade de fonte:
+  1. fii_registry.db (SQLite populado por data/refresh_universe.py)
+  2. _UNIVERSE_RAW (lista hardcoded — usado quando o registry está vazio ou
+     inacessível).
 
-Funções puras, sem dependências externas.
+O registry é atualizado semanalmente pelo fii_loop. Na primeira execução,
+semeie com: python -m data.refresh_universe --seed
 """
 
 # ---------------------------------------------------------------------------
@@ -101,20 +104,58 @@ _UNIVERSE_RAW: list[tuple[str, str, str, bool]] = [
 # ---------------------------------------------------------------------------
 
 
+def _from_registry(
+    ifix_only: bool,
+    sectors: list[str] | None,
+) -> list[dict] | None:
+    """Try to load universe from the SQLite registry. Returns None on any error."""
+    try:
+        from data.universe_registry import connect_registry, get_active_universe
+
+        conn = connect_registry()
+        rows = get_active_universe(conn, ifix_only=ifix_only)
+        conn.close()
+        if not rows:
+            return None
+        results = []
+        for r in rows:
+            setor = r["setor"]
+            if sectors and setor not in sectors:
+                continue
+            results.append(
+                {
+                    "ticker": r["ticker"],
+                    "setor":  setor,
+                    "nome":   r["nome"],
+                    "ifix":   bool(r["ifix"]),
+                }
+            )
+        return results
+    except Exception:
+        return None
+
+
 def get_universe(
     ifix_only: bool = True,
     sectors: list[str] | None = None,
 ) -> list[dict]:
-    """
-    Retorna a lista de FIIs do universo.
+    """Retorna a lista de FIIs do universo.
+
+    Tenta o registry SQLite primeiro (atualizado semanalmente pelo fii_loop).
+    Cai de volta na lista hardcoded se o registry estiver vazio ou inacessível.
 
     Args:
-        ifix_only (bool): Se True, retorna apenas componentes do IFIX.
-        sectors (list[str] | None): Filtrar por setores específicos.
+        ifix_only: Se True, retorna apenas componentes do IFIX.
+        sectors:   Filtrar por setores específicos.
 
     Returns:
         list[dict]: Lista de FIIs com ticker, setor, nome e status IFIX.
     """
+    reg = _from_registry(ifix_only, sectors)
+    if reg is not None:
+        return reg
+
+    # Fallback: hardcoded list
     results = []
     for ticker, setor, nome, ifix in _UNIVERSE_RAW:
         if ifix_only and not ifix:
@@ -124,9 +165,9 @@ def get_universe(
         results.append(
             {
                 "ticker": ticker,
-                "setor": setor,
-                "nome": nome,
-                "ifix": ifix,
+                "setor":  setor,
+                "nome":   nome,
+                "ifix":   ifix,
             }
         )
     return results
@@ -150,12 +191,23 @@ def get_tickers(
 
 
 def get_sector_map() -> dict[str, str]:
-    """
-    Retorna mapeamento ticker → setor completo (todos os FIIs, não apenas IFIX).
+    """Retorna mapeamento ticker → setor completo (todos os FIIs no registry).
+
+    Tenta o registry SQLite primeiro. Cai de volta na lista hardcoded.
 
     Returns:
         dict[str, str]: Mapa de ticker para setor.
     """
+    try:
+        from data.universe_registry import connect_registry, get_sector_map_from_db
+
+        conn = connect_registry()
+        m = get_sector_map_from_db(conn)
+        conn.close()
+        if m:
+            return m
+    except Exception:
+        pass
     return {ticker: setor for ticker, setor, _, _ in _UNIVERSE_RAW}
 
 

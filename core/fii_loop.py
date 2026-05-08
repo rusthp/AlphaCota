@@ -95,11 +95,12 @@ def _load_state() -> dict:
         logger.warning("fii_loop: state load failed: %s", exc)
     return {
         "scores": {},
-        "alert_states": {},       # ticker → "neutral" | "buy_active" | "sell_active"
-        "consecutive_below": {},  # ticker → int (cycles with score < SELL_ENTRY)
-        "consecutive_above": {},  # ticker → int (cycles with score >= BUY_ENTRY)
-        "last_alert": {},         # ticker → {"type": str, "ts": float}
+        "alert_states": {},           # ticker → "neutral" | "buy_active" | "sell_active"
+        "consecutive_below": {},      # ticker → int (cycles with score < SELL_ENTRY)
+        "consecutive_above": {},      # ticker → int (cycles with score >= BUY_ENTRY)
+        "last_alert": {},             # ticker → {"type": str, "ts": float}
         "last_ranking_date": "",
+        "last_universe_refresh": "",  # ISO week string "YYYY-Www" of last refresh
     }
 
 
@@ -172,9 +173,28 @@ def _cooldown_ok(last_alert: dict, ticker: str, alert_type: str) -> bool:
 # Core iteration
 # ---------------------------------------------------------------------------
 
+def _maybe_refresh_universe(state: dict) -> dict:
+    """Run the universe discovery pipeline at most once per calendar week."""
+    this_week = datetime.date.today().strftime("%G-W%V")  # ISO week, e.g. "2026-W19"
+    if state.get("last_universe_refresh") == this_week:
+        return state
+    try:
+        from data.refresh_universe import run_refresh
+        logger.info("fii_loop: weekly universe refresh starting")
+        n = run_refresh()
+        logger.info("fii_loop: universe refresh done — %d FIIs upserted", n)
+        state["last_universe_refresh"] = this_week
+    except Exception as exc:
+        logger.warning("fii_loop: universe refresh failed (non-fatal): %s", exc)
+    return state
+
+
 def _run_iteration(state: dict, iteration: int) -> dict:
     """Run one scoring cycle. Returns updated state."""
     logger.info("fii_loop: iteration %d start", iteration)
+
+    # --- Weekly universe refresh (non-blocking: failure just skips) ---
+    state = _maybe_refresh_universe(state)
 
     # --- Universe ---
     universe = get_universe(ifix_only=True)
