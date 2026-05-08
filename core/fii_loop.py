@@ -52,6 +52,7 @@ from core.fii_telegram import (
 )
 from core.fii_ledger import connect_fii_db, save_fii_snapshot, get_fii_score_deltas_bulk
 from core.fii_macro_engine import fetch_macro_context, macro_summary_line
+from core.fii_score_analytics import get_universe_analytics
 from core.logger import logger
 
 # ---------------------------------------------------------------------------
@@ -303,8 +304,11 @@ def _run_iteration(state: dict, iteration: int) -> dict:
     snap_conn.close()
     logger.info("fii_loop: snapshots saved for %d FIIs (%s)", len(ranked), today_str)
 
-    # --- Score deltas (30d momentum) — single bulk query ---
-    score_deltas = get_fii_score_deltas_bulk(connect_fii_db(), tickers, days=30)
+    # --- Score deltas (30d momentum) + velocity/acceleration analytics ---
+    analytics_conn = connect_fii_db()
+    score_deltas    = get_fii_score_deltas_bulk(analytics_conn, tickers, days=30)
+    score_analytics = get_universe_analytics(analytics_conn, tickers, days=60)
+    analytics_conn.close()
 
     prev_scores: dict[str, float] = state.get("scores", {})
     new_scores: dict[str, float] = {}
@@ -330,6 +334,9 @@ def _run_iteration(state: dict, iteration: int) -> dict:
         v_score = fii.get("valuation_score", 0.0)
         r_score = fii.get("risk_score", 50.0)
         d30     = score_deltas.get(ticker.upper())
+        _an     = score_analytics.get(ticker.upper(), {})
+        vel7    = _an.get("velocity_7d")
+        trend   = _an.get("trend", "")
 
         new_scores[ticker] = score
 
@@ -372,6 +379,7 @@ def _run_iteration(state: dict, iteration: int) -> dict:
                 dy=dy, pvp=pvp, price=price,
                 income_score=i_score, valuation_score=v_score, risk_score=r_score,
                 trigger=trigger, score_delta_30d=d30, macro_line=m_line,
+                velocity_7d=vel7, trend=trend,
             )
             alert_states[ticker]   = "buy_active"
             last_alert_map[ticker] = {"type": "buy", "ts": time.time()}
@@ -396,6 +404,7 @@ def _run_iteration(state: dict, iteration: int) -> dict:
                 score=score, score_prev=prev,
                 dy=dy, pvp=pvp, price=price,
                 trigger=trigger, score_delta_30d=d30, macro_line=m_line,
+                velocity_7d=vel7, trend=trend,
             )
             alert_states[ticker]   = "sell_active"
             last_alert_map[ticker] = {"type": "sell", "ts": time.time()}
@@ -416,6 +425,7 @@ def _run_iteration(state: dict, iteration: int) -> dict:
                 score=score, score_prev=prev,
                 dy=dy, pvp=pvp, price=price,
                 trigger=trigger, score_delta_30d=d30, macro_line=m_line,
+                velocity_7d=vel7, trend=trend,
             )
             last_alert_map[ticker] = {"type": "drop", "ts": time.time()}
             alerted.append(ticker)

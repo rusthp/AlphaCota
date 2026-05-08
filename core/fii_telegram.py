@@ -87,6 +87,16 @@ def _delta_str(delta: float | None) -> str:
     return f"▼{abs(delta):.1f}"
 
 
+def _velocity_line(velocity_7d: float | None, trend: str) -> str:
+    """Format score velocity line for alert messages."""
+    if velocity_7d is None:
+        return ""
+    arrow = "▲" if velocity_7d >= 0 else "▼"
+    trend_label = {"rising": "acelerando", "falling": "desacelerando", "stable": "estável"}.get(trend, "")
+    suffix = f" ({trend_label})" if trend_label else ""
+    return f"  📈 Velocidade 7d: <b>{arrow}{abs(velocity_7d):.2f} pts/dia</b>{suffix}"
+
+
 def notify_fii_buy(
     ticker: str,
     nome: str,
@@ -102,12 +112,15 @@ def notify_fii_buy(
     trigger: str,
     score_delta_30d: float | None = None,
     macro_line: str = "",
+    velocity_7d: float | None = None,
+    trend: str = "",
 ) -> None:
     """Alert when FII score crosses BUY threshold."""
     icon = _sector_icon(setor)
     delta = score - score_prev
     delta_str = f"+{delta:.1f}" if delta >= 0 else f"{delta:.1f}"
     momentum = f"  📊 Momentum 30d: <b>{_delta_str(score_delta_30d)} pts</b>" if score_delta_30d is not None else ""
+    vel_line = _velocity_line(velocity_7d, trend)
 
     text = (
         f"🟢 <b>OPORTUNIDADE FII</b>\n"
@@ -115,7 +128,8 @@ def notify_fii_buy(
         f"📊 Ticker: <b>{ticker}</b> — {nome}\n"
         f"{icon} Setor: <b>{setor}</b>\n"
         f"⭐ Score: <b>{score:.1f}/100</b> ({delta_str} pts){momentum}\n"
-        f"💰 DY (12m): <b>{dy*100:.1f}%</b>\n"
+        + (f"{vel_line}\n" if vel_line else "")
+        + f"💰 DY (12m): <b>{dy*100:.1f}%</b>\n"
         f"📐 P/VP: <b>{pvp:.2f}</b>\n"
         f"💵 Preço: <b>R$ {price:.2f}</b>\n"
         f"📈 Renda: {income_score:.0f} | Valuation: {valuation_score:.0f} | Risco: {risk_score:.0f}\n"
@@ -138,11 +152,14 @@ def notify_fii_sell(
     trigger: str,
     score_delta_30d: float | None = None,
     macro_line: str = "",
+    velocity_7d: float | None = None,
+    trend: str = "",
 ) -> None:
     """Alert when FII score drops below EXIT threshold or deteriorates sharply."""
     icon = _sector_icon(setor)
     delta = score - score_prev
     momentum = f"  📊 Momentum 30d: <b>{_delta_str(score_delta_30d)} pts</b>" if score_delta_30d is not None else ""
+    vel_line = _velocity_line(velocity_7d, trend)
 
     text = (
         f"🔴 <b>DETERIORAÇÃO FII</b>\n"
@@ -150,7 +167,8 @@ def notify_fii_sell(
         f"📊 Ticker: <b>{ticker}</b> — {nome}\n"
         f"{icon} Setor: <b>{setor}</b>\n"
         f"⭐ Score: <b>{score:.1f}/100</b> ({delta:.1f} pts){momentum}\n"
-        f"💰 DY (12m): <b>{dy*100:.1f}%</b>\n"
+        + (f"{vel_line}\n" if vel_line else "")
+        + f"💰 DY (12m): <b>{dy*100:.1f}%</b>\n"
         f"📐 P/VP: <b>{pvp:.2f}</b>\n"
         f"💵 Preço: <b>R$ {price:.2f}</b>\n"
         + (f"{macro_line}\n" if macro_line else "")
