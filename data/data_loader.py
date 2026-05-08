@@ -185,14 +185,14 @@ def fetch_dividends(
 
     records = []
     if divs is not None and not divs.empty:
+        import pandas as _pd
+        # Newer yfinance may return a DataFrame instead of a Series.
+        # Normalise to Series so .items() always yields (date_index, scalar).
+        if isinstance(divs, _pd.DataFrame):
+            divs = divs.iloc[:, 0]
         for date_idx, value in divs.items():
             date_str = str(date_idx)[:10]
-            records.append(
-                {
-                    "date": date_str,
-                    "dividend": round(float(value), 6),
-                }
-            )
+            records.append({"date": date_str, "dividend": round(float(value), 6)})
 
     if records:
         _save_csv(cache_file, records, ["date", "dividend"])
