@@ -43,8 +43,14 @@ _CVM_FII_PROVENTO_URL = (
     "https://dados.cvm.gov.br/dados/FII/DOC/INF_MENSAL/DADOS/inf_mensal_fii_complemento_{year}{month:02d}.csv"
 )
 
-# B3 endpoints publicos
-_B3_IFIX_URL = "https://sistemaswebb3-listados.b3.com.br/indexPage/day/IFIX?language=pt-br"
+# B3 index proxy API — returns JSON directly (no HTML parsing needed).
+# The path segment is base64({"language":"pt-br","pageNumber":1,"pageSize":120,"index":"IFIX","segment":"1"}).
+# Page size 120 covers the full IFIX (~108 FIIs as of 2026-05).
+_B3_IFIX_URL = (
+    "https://sistemaswebb3-listados.b3.com.br/indexProxy/indexCall/GetPortfolioDay/"
+    "eyJsYW5ndWFnZSI6InB0LWJyIiwicGFnZU51bWJlciI6MSwicGFnZVNpemUiOjEyMCwiaW5kZXgiO"
+    "iJJRklYIiwic2VnbWVudCI6IjEifQ=="
+)
 
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -303,20 +309,32 @@ def fetch_ifix_composition(db_path: str = _CACHE_DB) -> list[dict]:
         data = resp.json()
         results: list[dict] = []
 
-        # B3 response format varies, try common patterns
-        items = data if isinstance(data, list) else data.get("results", data.get("data", []))
+        items = data.get("results", data.get("data", data if isinstance(data, list) else []))
 
         for item in items:
             ticker = item.get("cod", item.get("ticker", item.get("code", ""))).strip()
             if not ticker:
                 continue
 
+            # B3 proxy returns participacao as BR-formatted string "0,104"
+            raw_part = item.get("part", item.get("participation", "0")) or "0"
+            try:
+                participacao = float(str(raw_part).replace(".", "").replace(",", "."))
+            except (ValueError, TypeError):
+                participacao = 0.0
+
+            raw_qty = item.get("theoricalQty", item.get("qty", "0")) or "0"
+            try:
+                qty = float(str(raw_qty).replace(".", "").replace(",", "."))
+            except (ValueError, TypeError):
+                qty = 0.0
+
             results.append(
                 {
                     "ticker": ticker,
                     "nome": item.get("asset", item.get("name", "")).strip(),
-                    "participacao": float(item.get("part", item.get("participation", 0))),
-                    "quantidade_teorica": float(item.get("theoricalQty", item.get("qty", 0))),
+                    "participacao": participacao,
+                    "quantidade_teorica": qty,
                 }
             )
 
