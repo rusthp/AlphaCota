@@ -238,7 +238,7 @@ def _get_ifix_return(days: int) -> float | None:
     try:
         import yfinance as yf
         start = (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
-        hist  = yf.Ticker("IFIX11.SA").history(start=start, auto_adjust=True)
+        hist  = yf.Ticker("XFIX11.SA").history(start=start, auto_adjust=True)
         if hist.empty or len(hist) < 2:
             _ifix_cache[days] = None
             return None
