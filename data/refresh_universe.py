@@ -40,65 +40,10 @@ from data.universe_registry import (
     get_registry_stats,
 )
 from data.cvm_b3_client import fetch_ifix_composition
+from data.sector_enricher import classify_sector, enrich_registry_sectors, KNOWN_SECTORS
 
 if TYPE_CHECKING:
     pass
-
-# ---------------------------------------------------------------------------
-# Known sector map — seeded from the original hardcoded universe list.
-# Entries here take precedence over the keyword heuristic for known tickers.
-# Add new entries here whenever a ticker's sector is confirmed manually.
-# ---------------------------------------------------------------------------
-
-_KNOWN_SECTORS: dict[str, str] = {
-    # Papel (CRI)
-    "MXRF11": "Papel (CRI)", "KNCR11": "Papel (CRI)", "RECR11": "Papel (CRI)",
-    "MCCI11": "Papel (CRI)", "VRTA11": "Papel (CRI)", "HABT11": "Papel (CRI)",
-    "RZAK11": "Papel (CRI)", "VGIR11": "Papel (CRI)", "CPTS11": "Papel (CRI)",
-    "KNIP11": "Papel (CRI)", "RBRR11": "Papel (CRI)", "IRDM11": "Papel (CRI)",
-    "PLCR11": "Papel (CRI)", "CVBI11": "Papel (CRI)", "BCRI11": "Papel (CRI)",
-    "RBHY11": "Papel (CRI)", "GCRI11": "Papel (CRI)", "URPR11": "Papel (CRI)",
-    "REIT11": "Papel (CRI)", "VSLH11": "Papel (CRI)", "HGCR11": "Papel (CRI)",
-    "DEVA11": "Papel (CRI)", "BPFF11": "Papel (CRI)", "VCJR11": "Papel (CRI)",
-    "OUJP11": "Papel (CRI)", "TPFT11": "Papel (CRI)", "NCHB11": "Papel (CRI)",
-    # Logística
-    "HGLG11": "Logística", "XPLG11": "Logística", "BTLG11": "Logística",
-    "VILG11": "Logística", "BRCO11": "Logística", "SDIL11": "Logística",
-    "LVBI11": "Logística", "GARE11": "Logística", "BLMR11": "Logística",
-    "LGCP11": "Logística", "EURO11": "Logística", "VVPR11": "Logística",
-    "BRPL11": "Logística", "PATL11": "Logística", "JRDM11": "Logística",
-    # Shopping
-    "XPML11": "Shopping", "MALL11": "Shopping", "VISC11": "Shopping",
-    "HSML11": "Shopping", "ALMI11": "Shopping", "FIGS11": "Shopping",
-    "GSFI11": "Shopping", "ABCP11": "Shopping", "PQDP11": "Shopping",
-    # Lajes Corp.
-    "BRCR11": "Lajes Corp.", "JSRE11": "Lajes Corp.", "PVBI11": "Lajes Corp.",
-    "HGRE11": "Lajes Corp.", "RCRB11": "Lajes Corp.", "BMLC11": "Lajes Corp.",
-    "GGRC11": "Lajes Corp.", "TEPP11": "Lajes Corp.", "VINO11": "Lajes Corp.",
-    "FVPQ11": "Lajes Corp.", "GTWR11": "Lajes Corp.", "CPFF11": "Lajes Corp.",
-    "LIFE11": "Lajes Corp.",
-    # Fundo de Fundos
-    "BCFF11": "Fundo de Fundos", "HFOF11": "Fundo de Fundos", "RBFF11": "Fundo de Fundos",
-    "MGFF11": "Fundo de Fundos", "KFOF11": "Fundo de Fundos", "BCIA11": "Fundo de Fundos",
-    "IBFF11": "Fundo de Fundos", "MORE11": "Fundo de Fundos",
-    # Híbrido
-    "HGBS11": "Híbrido", "KNRI11": "Híbrido", "RBRF11": "Híbrido",
-    "TRXF11": "Híbrido", "RBRP11": "Híbrido", "XPCI11": "Híbrido",
-    "QAGR11": "Híbrido",
-    # Agro
-    "RZTR11": "Agro", "RURA11": "Agro", "JURO11": "Agro", "VGIP11": "Agro",
-    "PEMA11": "Agro",
-    # Saúde
-    "HCTR11": "Saúde", "CARE11": "Saúde", "HSAF11": "Saúde",
-    "DEVA11": "Saúde",
-    # Residencial
-    "MFII11": "Residencial", "TGAR11": "Residencial", "ALZR11": "Residencial",
-    "RBTS11": "Residencial", "URBA11": "Residencial",
-    # Educacional
-    "RECT11": "Educacional", "RBED11": "Educacional",
-    # Hotel
-    "HGHO11": "Hotel", "HTMX11": "Hotel",
-}
 
 # ---------------------------------------------------------------------------
 # Tier thresholds
@@ -108,45 +53,6 @@ _TIER1_MIN_LIQUIDITY = 1_000_000.0   # R$1M/day → Tier 1
 _TIER2_MIN_LIQUIDITY = 300_000.0     # R$300k/day → Tier 2
 _MIN_VALID_PRICE     = 0.01          # below this → invalid (ghost trade)
 _STALE_DAYS          = 10            # price older than this → yahoo_ok = False
-
-
-# ---------------------------------------------------------------------------
-# Sector classification
-# ---------------------------------------------------------------------------
-
-def _classify_sector(ticker: str, nome: str) -> str:
-    """Classify sector via known map first, then keyword heuristic."""
-    ticker_u = ticker.upper()
-    if ticker_u in _KNOWN_SECTORS:
-        return _KNOWN_SECTORS[ticker_u]
-
-    nome_u = nome.upper()
-
-    # Keyword heuristic — ordered from most-specific to least
-    if any(k in nome_u for k in ["CRI", "CREDITO IMOB", "RECEBIV", "SECURIT", "PAPEL"]):
-        return "Papel (CRI)"
-    if "FUNDO DE FUNDO" in nome_u or "FOF" in ticker_u:
-        return "Fundo de Fundos"
-    if any(k in nome_u for k in ["LOGIST", "ARMAZEN", "GALP", "INDUSTRIAL", "GARE"]):
-        return "Logística"
-    if any(k in nome_u for k in ["SHOPPING", "MALL", "VAREJO", "COMERCIAL"]):
-        return "Shopping"
-    if any(k in nome_u for k in ["CORPORATIV", "ESCRITOR", "LAJE", "CORP"]):
-        return "Lajes Corp."
-    if any(k in nome_u for k in ["AGRO", "RURAL", "TERRA", "FAZENDA"]):
-        return "Agro"
-    if any(k in nome_u for k in ["SAUDE", "HOSPITAL", "MEDIC", "CLINICA", "SAÚDE"]):
-        return "Saúde"
-    if any(k in nome_u for k in ["RESID", "APART", "HABIT", "VILA"]):
-        return "Residencial"
-    if "HOTEL" in nome_u or "HOSP" in nome_u:
-        return "Hotel"
-    if any(k in nome_u for k in ["EDUCA", "ESCOLA", "UNIVERS"]):
-        return "Educacional"
-    if any(k in nome_u for k in ["HÍBRIDO", "HIBRIDO", "MULTI"]):
-        return "Híbrido"
-
-    return "Outros"
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +209,7 @@ def run_refresh(
 
         nome = item.get("nome", "")
         participacao = float(item.get("participacao", 0.0))
-        setor = _classify_sector(ticker, nome)
+        setor = classify_sector(ticker, nome)
 
         logger.info("refresh_universe: validating %s (%s)", ticker, setor)
         yahoo_data = _validate_yahoo(ticker)
@@ -352,13 +258,19 @@ def run_refresh(
         logger.info("refresh_universe: %s removed from IFIX — marking inactive", ticker)
         mark_inactive(conn, ticker)
 
+    # --- Sector enrichment: resolve remaining 'Outros' via SI JSON-LD ---
+    enriched = enrich_registry_sectors(conn, force=False, use_si=True)
+    logger.info("refresh_universe: sector enrichment updated %d rows", enriched)
+
     stats = get_registry_stats(conn)
     conn.close()
 
     logger.info(
-        "refresh_universe: done — upserted=%d removed=%d active=%s ifix=%s yahoo_ok=%s",
+        "refresh_universe: done — upserted=%d removed=%d enriched=%d "
+        "active=%s ifix=%s yahoo_ok=%s",
         upserted,
         len(removed),
+        enriched,
         stats.get("ativos"),
         stats.get("ifix_count"),
         stats.get("yahoo_ok"),

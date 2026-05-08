@@ -47,6 +47,7 @@ from core.fii_telegram import (
     notify_fii_sell,
     notify_fii_ranking,
     notify_fii_loop_error,
+    notify_coverage_health,
     send_message,
 )
 from core.fii_ledger import connect_fii_db, save_fii_snapshot, get_fii_score_deltas_bulk
@@ -180,10 +181,26 @@ def _maybe_refresh_universe(state: dict) -> dict:
         return state
     try:
         from data.refresh_universe import run_refresh
+        from data.universe_registry import connect_registry, get_registry_stats, get_active_universe
         logger.info("fii_loop: weekly universe refresh starting")
         n = run_refresh()
         logger.info("fii_loop: universe refresh done — %d FIIs upserted", n)
         state["last_universe_refresh"] = this_week
+
+        # Send coverage health dashboard after refresh
+        try:
+            reg_conn = connect_registry()
+            stats = get_registry_stats(reg_conn)
+            rows = get_active_universe(reg_conn, ifix_only=False)
+            reg_conn.close()
+            sector_breakdown: dict[str, int] = {}
+            for r in rows:
+                s = r["setor"]
+                sector_breakdown[s] = sector_breakdown.get(s, 0) + 1
+            notify_coverage_health(stats, sector_breakdown)
+        except Exception as exc:
+            logger.warning("fii_loop: coverage dashboard failed: %s", exc)
+
     except Exception as exc:
         logger.warning("fii_loop: universe refresh failed (non-fatal): %s", exc)
     return state

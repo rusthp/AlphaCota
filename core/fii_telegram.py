@@ -225,3 +225,51 @@ def notify_fii_loop_error(error: str) -> None:
         f"⏰ {time.strftime('%d/%m/%Y %H:%M')}"
     )
     send_message(text)
+
+
+def notify_coverage_health(stats: dict, sector_breakdown: dict[str, int] | None = None) -> None:
+    """Send weekly universe coverage health dashboard to Telegram.
+
+    Args:
+        stats:            Output of get_registry_stats() — total, ativos, ifix_count,
+                          yahoo_ok, yahoo_broken, last_validated.
+        sector_breakdown: Optional dict setor → count for the 'Outros' breakdown.
+    """
+    total        = stats.get("total", 0)
+    ativos       = stats.get("ativos", 0) or 0
+    ifix_count   = stats.get("ifix_count", 0) or 0
+    yahoo_ok     = stats.get("yahoo_ok", 0) or 0
+    yahoo_broken = stats.get("yahoo_broken", 0) or 0
+    last_val     = stats.get("last_validated", "—") or "—"
+
+    outros = sector_breakdown.get("Outros", 0) if sector_breakdown else 0
+    classified = ativos - outros
+
+    lines = [
+        "📡 <b>Coverage Health — AlphaCota FII</b>",
+        "━━━━━━━━━━━━━━━━━━━",
+        f"🏦 Universo total: <b>{total}</b> FIIs registrados",
+        f"✅ Ativos: <b>{ativos}</b>  (IFIX: {ifix_count})",
+        f"📊 Yahoo Finance OK: <b>{yahoo_ok}</b>",
+    ]
+    if yahoo_broken:
+        lines.append(f"⚠️ Yahoo sem dados: <b>{yahoo_broken}</b>")
+    lines.append(f"🗂️ Setor classificado: <b>{classified}/{ativos}</b>")
+    if outros:
+        lines.append(f"❓ Setor desconhecido ('Outros'): <b>{outros}</b>")
+
+    if sector_breakdown:
+        top_sectors = sorted(
+            [(s, c) for s, c in sector_breakdown.items() if s != "Outros"],
+            key=lambda x: -x[1],
+        )[:6]
+        if top_sectors:
+            lines.append("")
+            lines.append("🏷️ <b>FIIs por setor</b>")
+            for setor, count in top_sectors:
+                lines.append(f"  {setor}: {count}")
+            if outros:
+                lines.append(f"  Outros: {outros}")
+
+    lines.append(f"📅 Validado: {last_val}  ⏰ {time.strftime('%d/%m/%Y %H:%M')}")
+    send_message("\n".join(lines))
