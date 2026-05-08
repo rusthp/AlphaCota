@@ -60,9 +60,27 @@ from core.logger import logger
 _DEFAULT_INTERVAL = int(os.getenv("FII_LOOP_INTERVAL_SECONDS", "21600"))  # 6h
 _STATE_FILE = Path("data/fii_loop_state.json")
 
-_BUY_THRESHOLD  = 72.0   # score >= 72 → BUY alert
-_SELL_THRESHOLD = 45.0   # score <  45 → SELL/exit alert
-_DROP_ALERT     = 15.0   # drop >= 15 pts in one cycle → deterioration alert
+# Hysteresis thresholds — entry and exit are different to prevent flip-flop.
+_BUY_ENTRY   = 80.0   # score must reach 80 to trigger BUY alert
+_BUY_HYSTER  = 74.0   # BUY state clears only if score falls below 74
+_SELL_ENTRY  = 45.0   # score must fall below 45 to trigger SELL alert
+_SELL_HYSTER = 50.0   # SELL state clears only if score recovers above 50
+_DROP_ALERT  = 15.0   # sharp drop in one cycle — fires regardless of state
+
+# Temporal persistence: require N consecutive cycles before any alert fires.
+# At 6h interval: 2 cycles = 12h confirmation before acting.
+_PERSIST_CYCLES = 2
+
+# Cooldown: same alert type on same ticker won't re-fire within this window.
+_ALERT_COOLDOWN_HOURS = 72.0
+
+# Data quality: alerts suppressed when confidence is below this threshold.
+_MIN_DATA_CONFIDENCE = 0.60
+
+# Outlier sanity bounds — values outside these ranges are discarded.
+_DY_MIN, _DY_MAX       = 0.001, 0.40    # 0.1% – 40% annual DY
+_PVP_MIN, _PVP_MAX     = 0.30, 3.0
+_VAC_MIN, _VAC_MAX     = 0.0, 1.0       # 0% – 100% vacancy
 
 # ---------------------------------------------------------------------------
 # State persistence
@@ -75,7 +93,14 @@ def _load_state() -> dict:
             return json.loads(_STATE_FILE.read_text(encoding="utf-8"))
     except Exception as exc:
         logger.warning("fii_loop: state load failed: %s", exc)
-    return {"scores": {}, "last_ranking_date": ""}
+    return {
+        "scores": {},
+        "alert_states": {},       # ticker → "neutral" | "buy_active" | "sell_active"
+        "consecutive_below": {},  # ticker → int (cycles with score < SELL_ENTRY)
+        "consecutive_above": {},  # ticker → int (cycles with score >= BUY_ENTRY)
+        "last_alert": {},         # ticker → {"type": str, "ts": float}
+        "last_ranking_date": "",
+    }
 
 
 def _save_state(state: dict) -> None:
@@ -84,6 +109,63 @@ def _save_state(state: dict) -> None:
         _STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception as exc:
         logger.warning("fii_loop: state save failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Data quality helpers
+# ---------------------------------------------------------------------------
+
+def _sanitize_fundamentals(fund: dict) -> dict:
+    """Return copy of fund dict with outlier values replaced by None.
+
+    Outlier values (HTML scraping artefacts, API errors) produce scores that
+    look decisive but are just garbage. Replacing them with None causes the
+    scoring engine to use its defaults (neutral), which is safer than acting
+    on a DY=83% that doesn't exist.
+    """
+    cleaned = dict(fund)
+    dy = fund.get("dividend_yield") or 0.0
+    if not (_DY_MIN <= dy <= _DY_MAX):
+        cleaned["dividend_yield"] = None
+
+    pvp = fund.get("pvp") or 0.0
+    if pvp and not (_PVP_MIN <= pvp <= _PVP_MAX):
+        cleaned["pvp"] = None
+
+    vac = fund.get("vacancy_rate")
+    if vac is not None and not (_VAC_MIN <= vac <= _VAC_MAX):
+        cleaned["vacancy_rate"] = None
+
+    return cleaned
+
+
+def _data_confidence(fund: dict, fii: dict) -> float:
+    """Return a confidence score in [0, 1] based on data completeness.
+
+    Each missing or defaulted fundamental reduces confidence. Alerts are
+    suppressed when confidence falls below _MIN_DATA_CONFIDENCE.
+    """
+    conf = 1.0
+    if not fii.get("dividend_yield"):
+        conf -= 0.20
+    if fii.get("pvp", 1.0) == 1.0 and fund.get("pvp") is None:
+        conf -= 0.10
+    if fii.get("dividend_consistency", 50.0) == 50.0 and fund.get("dividend_consistency") is None:
+        conf -= 0.10
+    if fund.get("vacancy_rate") is None:
+        conf -= 0.05
+    if fund.get("debt_ratio") is None:
+        conf -= 0.05
+    return max(0.0, round(conf, 2))
+
+
+def _cooldown_ok(last_alert: dict, ticker: str, alert_type: str) -> bool:
+    """Return True when the cooldown window for this ticker+type has elapsed."""
+    entry = last_alert.get(ticker, {})
+    if entry.get("type") != alert_type:
+        return True
+    elapsed_h = (time.time() - entry.get("ts", 0.0)) / 3600.0
+    return elapsed_h >= _ALERT_COOLDOWN_HOURS
 
 
 # ---------------------------------------------------------------------------
@@ -104,17 +186,22 @@ def _run_iteration(state: dict, iteration: int) -> dict:
     logger.info("fii_loop: fetching fundamentals for %d FIIs", len(tickers))
     fundamentals = fetch_fundamentals_bulk(tickers)
 
-    # --- Prices + build scoring payload ---
+    # --- Prices + build scoring payload (with outlier sanitation) ---
     fiis_for_ranking: list[dict] = []
+    sanitized_funds: dict[str, dict] = {}
     for ticker in tickers:
-        fund = fundamentals.get(ticker, {})
+        raw_fund = fundamentals.get(ticker, {})
+        fund = _sanitize_fundamentals(raw_fund)
+        sanitized_funds[ticker] = fund
+
         price, _ = load_last_price(ticker)
         monthly_div, _ = load_monthly_dividend(ticker)
 
-        # Prefer scraper DY; fall back to yfinance-derived DY
+        # Prefer scraper DY; fall back to yfinance-derived DY; validate result
         dy = fund.get("dividend_yield") or 0.0
         if dy == 0.0 and price > 0 and monthly_div > 0:
-            dy = (monthly_div * 12) / price
+            derived = (monthly_div * 12) / price
+            dy = derived if (_DY_MIN <= derived <= _DY_MAX) else 0.0
 
         fiis_for_ranking.append({
             "ticker": ticker,
@@ -126,7 +213,6 @@ def _run_iteration(state: dict, iteration: int) -> dict:
             "revenue_growth_12m": fund.get("revenue_growth_12m") or 0.0,
             "earnings_growth_12m": fund.get("earnings_growth_12m") or 0.0,
             "news_sentiment": fund.get("news_sentiment") or 0.0,
-            # Pass-through for alert messages
             "_price": price,
             "_monthly_div": monthly_div,
         })
@@ -187,32 +273,62 @@ def _run_iteration(state: dict, iteration: int) -> dict:
     new_scores: dict[str, float] = {}
     alerted: list[str] = []
 
+    alert_states   = state.setdefault("alert_states", {})
+    consec_below   = state.setdefault("consecutive_below", {})
+    consec_above   = state.setdefault("consecutive_above", {})
+    last_alert_map = state.setdefault("last_alert", {})
+
     for fii in ranked:
-        ticker   = fii["ticker"]
-        score    = fii["alpha_score"]
-        prev     = prev_scores.get(ticker)
-        dy       = fii["dividend_yield"]
-        pvp      = fii["pvp"]
-        price    = fii.get("_price", 0.0)
-        setor    = sector_map.get(ticker, "Outros")
-        nome     = name_map.get(ticker) or ticker
-        i_score  = fii.get("income_score", 0.0)
-        v_score  = fii.get("valuation_score", 0.0)
-        r_score  = fii.get("risk_score", 50.0)
-        d30      = score_deltas.get(ticker.upper())
+        ticker  = fii["ticker"]
+        score   = fii["alpha_score"]
+        prev    = prev_scores.get(ticker)
+        fund    = sanitized_funds.get(ticker, {})
+        conf    = _data_confidence(fund, fii)
+        dy      = fii["dividend_yield"]
+        pvp     = fii["pvp"]
+        price   = fii.get("_price", 0.0)
+        setor   = sector_map.get(ticker, "Outros")
+        nome    = name_map.get(ticker) or ticker
+        i_score = fii.get("income_score", 0.0)
+        v_score = fii.get("valuation_score", 0.0)
+        r_score = fii.get("risk_score", 50.0)
+        d30     = score_deltas.get(ticker.upper())
 
         new_scores[ticker] = score
 
         if prev is None:
-            logger.info("fii_loop: %s first-seen score=%.1f", ticker, score)
+            alert_states[ticker] = "neutral"
+            consec_below[ticker] = 0
+            consec_above[ticker] = 0
+            logger.info("fii_loop: %s first-seen score=%.1f conf=%.2f", ticker, score, conf)
             continue
 
         delta = score - prev
 
-        # BUY: crossed above threshold
-        if score >= _BUY_THRESHOLD and prev < _BUY_THRESHOLD:
-            trigger = f"score cruzou {_BUY_THRESHOLD:.0f} (era {prev:.1f})"
-            logger.info("fii_loop: BUY alert %s score=%.1f", ticker, score)
+        # Update consecutive-cycle counters
+        if score < _SELL_ENTRY:
+            consec_below[ticker] = consec_below.get(ticker, 0) + 1
+            consec_above[ticker] = 0
+        elif score >= _BUY_ENTRY:
+            consec_above[ticker] = consec_above.get(ticker, 0) + 1
+            consec_below[ticker] = 0
+        else:
+            consec_below[ticker] = 0
+            consec_above[ticker] = 0
+
+        cur_state = alert_states.get(ticker, "neutral")
+
+        # BUY: persistent above entry, not already buy_active, confidence OK
+        if (score >= _BUY_ENTRY
+                and consec_above.get(ticker, 0) >= _PERSIST_CYCLES
+                and cur_state != "buy_active"
+                and conf >= _MIN_DATA_CONFIDENCE
+                and _cooldown_ok(last_alert_map, ticker, "buy")):
+            trigger = (
+                f"score {score:.1f} ≥ {_BUY_ENTRY:.0f} "
+                f"por {_PERSIST_CYCLES} ciclos consecutivos"
+            )
+            logger.info("fii_loop: BUY alert %s score=%.1f conf=%.2f", ticker, score, conf)
             notify_fii_buy(
                 ticker=ticker, nome=nome, setor=setor,
                 score=score, score_prev=prev,
@@ -220,33 +336,57 @@ def _run_iteration(state: dict, iteration: int) -> dict:
                 income_score=i_score, valuation_score=v_score, risk_score=r_score,
                 trigger=trigger, score_delta_30d=d30, macro_line=m_line,
             )
+            alert_states[ticker]   = "buy_active"
+            last_alert_map[ticker] = {"type": "buy", "ts": time.time()}
             alerted.append(ticker)
-            continue
+        elif cur_state == "buy_active" and score < _BUY_HYSTER:
+            alert_states[ticker] = "neutral"
+            consec_above[ticker] = 0
 
-        # SELL: crossed below exit threshold
-        if score < _SELL_THRESHOLD and prev >= _SELL_THRESHOLD:
-            trigger = f"score caiu abaixo de {_SELL_THRESHOLD:.0f} (era {prev:.1f})"
-            logger.info("fii_loop: SELL alert %s score=%.1f", ticker, score)
+        # SELL: persistent below entry, not already sell_active, confidence OK
+        if (score < _SELL_ENTRY
+                and consec_below.get(ticker, 0) >= _PERSIST_CYCLES
+                and cur_state != "sell_active"
+                and conf >= _MIN_DATA_CONFIDENCE
+                and _cooldown_ok(last_alert_map, ticker, "sell")):
+            trigger = (
+                f"score {score:.1f} < {_SELL_ENTRY:.0f} "
+                f"por {_PERSIST_CYCLES} ciclos consecutivos"
+            )
+            logger.info("fii_loop: SELL alert %s score=%.1f conf=%.2f", ticker, score, conf)
             notify_fii_sell(
                 ticker=ticker, nome=nome, setor=setor,
                 score=score, score_prev=prev,
                 dy=dy, pvp=pvp, price=price,
                 trigger=trigger, score_delta_30d=d30, macro_line=m_line,
             )
+            alert_states[ticker]   = "sell_active"
+            last_alert_map[ticker] = {"type": "sell", "ts": time.time()}
             alerted.append(ticker)
-            continue
+        elif cur_state == "sell_active" and score >= _SELL_HYSTER:
+            alert_states[ticker] = "neutral"
+            consec_below[ticker] = 0
 
-        # DETERIORATION: sharp drop regardless of threshold crossing
-        if delta <= -_DROP_ALERT:
+        # DROP: sharp fall in one cycle — fires regardless of state
+        if (delta <= -_DROP_ALERT
+                and cur_state != "sell_active"
+                and conf >= _MIN_DATA_CONFIDENCE
+                and _cooldown_ok(last_alert_map, ticker, "drop")):
             trigger = f"queda de {abs(delta):.1f} pts em um ciclo (era {prev:.1f})"
-            logger.info("fii_loop: DROP alert %s Δ=%.1f", ticker, delta)
+            logger.info("fii_loop: DROP alert %s Δ=%.1f conf=%.2f", ticker, delta, conf)
             notify_fii_sell(
                 ticker=ticker, nome=nome, setor=setor,
                 score=score, score_prev=prev,
                 dy=dy, pvp=pvp, price=price,
                 trigger=trigger, score_delta_30d=d30, macro_line=m_line,
             )
+            last_alert_map[ticker] = {"type": "drop", "ts": time.time()}
             alerted.append(ticker)
+
+    state["alert_states"]      = alert_states
+    state["consecutive_below"] = consec_below
+    state["consecutive_above"] = consec_above
+    state["last_alert"]        = last_alert_map
 
     # --- Daily ranking (once per day at first iteration) ---
     today = time.strftime("%Y-%m-%d")
