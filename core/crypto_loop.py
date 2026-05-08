@@ -65,6 +65,7 @@ from core.crypto_ledger import (
     get_open_positions,
     get_symbol_win_rate,
     insert_signal_log,
+    save_crypto_snapshot,
     write_pnl_snapshot,
 )
 from core.crypto_market_context_engine import fetch_market_context
@@ -286,6 +287,7 @@ def _process_symbol(
     raw_oi_delta_pct_log = 0.0
     raw_taker_ratio_log = 0.5
     raw_ls_ratio_log = 1.0
+    onchain_sig = None
     try:
         onchain_sig = fetch_onchain_signals(symbol)
         if onchain_sig.available:
@@ -387,6 +389,40 @@ def _process_symbol(
             })
     except Exception as _log_exc:
         logger.debug("process: signal_log write failed for %s: %s", symbol, _log_exc)
+
+    try:
+        _snap_dbg = get_last_signal_debug(symbol) or {}
+        _oc = onchain_sig if (onchain_sig is not None and onchain_sig.available) else None
+        save_crypto_snapshot(conn, {  # type: ignore[arg-type]
+            "symbol": symbol,
+            "timestamp": signal_obj.timestamp,
+            "mode": mode,
+            "regime": _snap_dbg.get("regime_confirmed", "unknown"),
+            "direction": signal_obj.direction,
+            "confidence": signal_obj.confidence,
+            "combined_score": _snap_dbg.get("combined_after_btc", 0.0),
+            "threshold": _snap_dbg.get("threshold", 0.63),
+            "would_enter": 1 if _snap_dbg.get("would_enter") else 0,
+            "skip_reason": _snap_dbg.get("skip_reason"),
+            "raw_funding_rate": raw_funding_rate_log,
+            "raw_oi_delta_pct": raw_oi_delta_pct_log,
+            "raw_taker_ratio": raw_taker_ratio_log,
+            "raw_ls_ratio": raw_ls_ratio_log,
+            "funding_score": _oc.funding_score if _oc else 0.0,
+            "oi_score": _oc.oi_score if _oc else 0.0,
+            "taker_score": taker_score_log,
+            "ls_score": _oc.ls_score if _oc else 0.0,
+            "onchain_agg": onchain_score,
+            "btc_strength": _snap_dbg.get("btc_strength", 0.0),
+            "btc_modifier": _snap_dbg.get("btc_modifier", 1.0),
+            "oi_breakout_confirmed": 1 if oi_breakout_confirmed else 0,
+            "breakout_bonus": breakout_bonus,
+            "entry_price": signal_obj.entry_price,
+            "stop_loss": signal_obj.stop_loss,
+            "take_profit": signal_obj.take_profit,
+        })
+    except Exception as _snap_exc:
+        logger.debug("process: snapshot write failed for %s: %s", symbol, _snap_exc)
 
     if signal_obj.direction != "flat":
         ts = int(time.time())

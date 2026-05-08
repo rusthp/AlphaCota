@@ -24,6 +24,7 @@ Public API:
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 
@@ -180,9 +181,9 @@ def _fetch_ls_ratio(symbol: str) -> tuple[float, float]:
         return (1.0, 0.0)
 
     avg_ratio = sum(ratios) / len(ratios)
-    # Contrarian: deviation from 1.0 (neutral), inverted.
-    score = _clamp(-(avg_ratio - 1.0) / _LS_NORM)
-    return (round(avg_ratio, 4), score)
+    # tanh instead of linear clamp: preserves gradient at extremes (ls=2.4 → -0.84, not -1.00)
+    score = -math.tanh((avg_ratio - 1.0) / _LS_NORM)
+    return (round(avg_ratio, 4), round(score, 4))
 
 
 def fetch_onchain_signals(symbol: str) -> OnChainSignal:

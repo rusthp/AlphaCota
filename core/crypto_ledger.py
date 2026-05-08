@@ -160,6 +160,58 @@ CREATE INDEX IF NOT EXISTS idx_csl_regime_ts        ON crypto_signal_log(regime_
 CREATE INDEX IF NOT EXISTS idx_csl_decision_ts      ON crypto_signal_log(direction, timestamp);
 CREATE INDEX IF NOT EXISTS idx_csl_would_enter_ts   ON crypto_signal_log(would_enter, timestamp);
 CREATE INDEX IF NOT EXISTS idx_csl_btc_strength     ON crypto_signal_log(btc_strength);
+
+-- Immutable per-tick market structure snapshot (every symbol, every loop tick)
+-- Complements signal_log (decisions only) with a full feature record even when
+-- the engine outputs "flat". One row per (symbol, timestamp).
+CREATE TABLE IF NOT EXISTS crypto_signal_snapshot (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol               TEXT    NOT NULL,
+    timestamp            REAL    NOT NULL,
+    mode                 TEXT    NOT NULL DEFAULT 'paper',
+
+    -- Regime
+    regime               TEXT    NOT NULL DEFAULT 'unknown',
+
+    -- Signal engine output
+    direction            TEXT    NOT NULL DEFAULT 'flat',
+    confidence           REAL    NOT NULL DEFAULT 0.0,
+    combined_score       REAL    NOT NULL DEFAULT 0.0,
+    threshold            REAL    NOT NULL DEFAULT 0.63,
+    would_enter          INTEGER NOT NULL DEFAULT 0,
+    skip_reason          TEXT,
+
+    -- On-chain: raw values (never loses value as weights/norms change)
+    raw_funding_rate     REAL    NOT NULL DEFAULT 0.0,
+    raw_oi_delta_pct     REAL    NOT NULL DEFAULT 0.0,
+    raw_taker_ratio      REAL    NOT NULL DEFAULT 0.5,
+    raw_ls_ratio         REAL    NOT NULL DEFAULT 1.0,
+
+    -- On-chain: normalised scores
+    funding_score        REAL    NOT NULL DEFAULT 0.0,
+    oi_score             REAL    NOT NULL DEFAULT 0.0,
+    taker_score          REAL    NOT NULL DEFAULT 0.0,
+    ls_score             REAL    NOT NULL DEFAULT 0.0,
+    onchain_agg          REAL    NOT NULL DEFAULT 0.0,
+
+    -- BTC context
+    btc_strength         REAL    NOT NULL DEFAULT 0.0,
+    btc_modifier         REAL    NOT NULL DEFAULT 1.0,
+
+    -- Breakout
+    oi_breakout_confirmed INTEGER NOT NULL DEFAULT 0,
+    breakout_bonus       REAL    NOT NULL DEFAULT 0.0,
+
+    -- Entry context (0.0 when no entry)
+    entry_price          REAL    NOT NULL DEFAULT 0.0,
+    stop_loss            REAL    NOT NULL DEFAULT 0.0,
+    take_profit          REAL    NOT NULL DEFAULT 0.0
+);
+
+CREATE INDEX IF NOT EXISTS idx_css_symbol_ts   ON crypto_signal_snapshot(symbol, timestamp);
+CREATE INDEX IF NOT EXISTS idx_css_ts          ON crypto_signal_snapshot(timestamp);
+CREATE INDEX IF NOT EXISTS idx_css_regime      ON crypto_signal_snapshot(regime, timestamp);
+CREATE INDEX IF NOT EXISTS idx_css_direction   ON crypto_signal_snapshot(direction, timestamp);
 """
 
 
@@ -188,6 +240,47 @@ def _migrate(conn: sqlite3.Connection) -> None:
             logger.info("crypto_ledger: migrated — added crypto_signal_log.%s", _col)
         except sqlite3.OperationalError:
             pass
+
+    # crypto_signal_snapshot — added in v3 (tanh L/S + snapshot warehouse).
+    try:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS crypto_signal_snapshot (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL, timestamp REAL NOT NULL,
+                mode TEXT NOT NULL DEFAULT 'paper',
+                regime TEXT NOT NULL DEFAULT 'unknown',
+                direction TEXT NOT NULL DEFAULT 'flat',
+                confidence REAL NOT NULL DEFAULT 0.0,
+                combined_score REAL NOT NULL DEFAULT 0.0,
+                threshold REAL NOT NULL DEFAULT 0.63,
+                would_enter INTEGER NOT NULL DEFAULT 0,
+                skip_reason TEXT,
+                raw_funding_rate REAL NOT NULL DEFAULT 0.0,
+                raw_oi_delta_pct REAL NOT NULL DEFAULT 0.0,
+                raw_taker_ratio REAL NOT NULL DEFAULT 0.5,
+                raw_ls_ratio REAL NOT NULL DEFAULT 1.0,
+                funding_score REAL NOT NULL DEFAULT 0.0,
+                oi_score REAL NOT NULL DEFAULT 0.0,
+                taker_score REAL NOT NULL DEFAULT 0.0,
+                ls_score REAL NOT NULL DEFAULT 0.0,
+                onchain_agg REAL NOT NULL DEFAULT 0.0,
+                btc_strength REAL NOT NULL DEFAULT 0.0,
+                btc_modifier REAL NOT NULL DEFAULT 1.0,
+                oi_breakout_confirmed INTEGER NOT NULL DEFAULT 0,
+                breakout_bonus REAL NOT NULL DEFAULT 0.0,
+                entry_price REAL NOT NULL DEFAULT 0.0,
+                stop_loss REAL NOT NULL DEFAULT 0.0,
+                take_profit REAL NOT NULL DEFAULT 0.0
+            );
+            CREATE INDEX IF NOT EXISTS idx_css_symbol_ts ON crypto_signal_snapshot(symbol, timestamp);
+            CREATE INDEX IF NOT EXISTS idx_css_ts        ON crypto_signal_snapshot(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_css_regime    ON crypto_signal_snapshot(regime, timestamp);
+            CREATE INDEX IF NOT EXISTS idx_css_direction ON crypto_signal_snapshot(direction, timestamp);
+        """)
+        conn.commit()
+        logger.info("crypto_ledger: crypto_signal_snapshot table ready")
+    except sqlite3.OperationalError as exc:
+        logger.debug("crypto_ledger: snapshot migration: %s", exc)
 
     # crypto_signal_log was added in v2 — safe no-op if already exists.
     try:
@@ -611,6 +704,48 @@ def insert_signal_log(conn: sqlite3.Connection, entry: dict) -> None:
         conn.commit()
     except sqlite3.Error as exc:
         logger.warning("insert_signal_log: %s", exc)
+
+
+def save_crypto_snapshot(conn: sqlite3.Connection, entry: dict) -> None:
+    """Persist one per-tick market-structure snapshot.
+
+    Called every loop tick for every symbol — even when the signal is flat.
+    This builds the historical feature store used for replay, calibration,
+    and attribution analysis.
+
+    Args:
+        conn: Open sqlite3 connection.
+        entry: Dict with keys matching crypto_signal_snapshot columns.
+               Missing keys default to 0 / 'unknown' via DB defaults.
+    """
+    try:
+        conn.execute(
+            """
+            INSERT INTO crypto_signal_snapshot (
+                symbol, timestamp, mode, regime,
+                direction, confidence, combined_score, threshold,
+                would_enter, skip_reason,
+                raw_funding_rate, raw_oi_delta_pct, raw_taker_ratio, raw_ls_ratio,
+                funding_score, oi_score, taker_score, ls_score, onchain_agg,
+                btc_strength, btc_modifier,
+                oi_breakout_confirmed, breakout_bonus,
+                entry_price, stop_loss, take_profit
+            ) VALUES (
+                :symbol, :timestamp, :mode, :regime,
+                :direction, :confidence, :combined_score, :threshold,
+                :would_enter, :skip_reason,
+                :raw_funding_rate, :raw_oi_delta_pct, :raw_taker_ratio, :raw_ls_ratio,
+                :funding_score, :oi_score, :taker_score, :ls_score, :onchain_agg,
+                :btc_strength, :btc_modifier,
+                :oi_breakout_confirmed, :breakout_bonus,
+                :entry_price, :stop_loss, :take_profit
+            )
+            """,
+            entry,
+        )
+        conn.commit()
+    except sqlite3.Error as exc:
+        logger.warning("save_crypto_snapshot(%s): %s", entry.get("symbol"), exc)
 
 
 # ---------------------------------------------------------------------------
