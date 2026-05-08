@@ -7,7 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import {
   ArrowLeft, TrendingUp, DollarSign,
   BarChart3, Target, Loader2, Star, Building2, Users, Activity, GitCompareArrows, CalendarClock,
-  Sparkles, ThumbsUp, ThumbsDown, Minus,
+  Sparkles, ThumbsUp, ThumbsDown, Minus, Hash,
 } from "lucide-react";
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
