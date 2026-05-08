@@ -1,0 +1,28 @@
+[Unit]
+Description=AlphaCota FII Scoring Loop
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/alphacota
+
+# Required environment variables in /root/alphacota/.env:
+#   TELEGRAM_BOT_TOKEN=...         (bot token for Alerta Fii group)
+#   TELEGRAM_CHAT_ID=-5248803958   (Alerta Fii group chat id)
+#   FII_LOOP_INTERVAL_SECONDS=...  (optional, default 21600 = 6h)
+EnvironmentFile=/root/alphacota/.env
+
+ExecStart=/usr/bin/python3 -m core.fii_loop
+Restart=on-failure
+RestartSec=60
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=alphacota-fii
+
+MemoryMax=512M
+CPUQuota=25%
+
+[Install]
+WantedBy=multi-user.target
