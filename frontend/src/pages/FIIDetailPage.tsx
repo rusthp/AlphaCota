@@ -19,6 +19,16 @@ import DeepAnalysisPanel from "@/components/DeepAnalysisPanel";
 
 const FAV_KEY = "alphacota_favourites";
 
+const PERIODS = [
+  { label: "3M",  months: 3 },
+  { label: "6M",  months: 6 },
+  { label: "1A",  months: 12 },
+  { label: "2A",  months: 24 },
+] as const;
+type Period = typeof PERIODS[number]["label"];
+
+const sliceByPeriod = <T,>(data: T[], months: number) => data.slice(-months);
+
 function getFavourites(): string[] {
   try { return JSON.parse(localStorage.getItem(FAV_KEY) || "[]"); } catch { return []; }
 }
@@ -66,6 +76,20 @@ export default function FIIDetailPage() {
     }
   }, [ticker, aiLoading]);
 
+  // These hooks MUST stay above the early returns to satisfy the Rules of Hooks.
+  const [pricePeriod, setPricePeriod] = useState<Period>("1A");
+  const [divPeriod,   setDivPeriod]   = useState<Period>("1A");
+  const _priceHistory: { month: string; price: number }[]    = (fii as any)?.price_history ?? [];
+  const _dividendHistory: { month: string; value: number }[] = (fii as any)?.dividend_history ?? [];
+  const priceFiltered = useMemo(
+    () => sliceByPeriod(_priceHistory,    PERIODS.find(p => p.label === pricePeriod)!.months),
+    [_priceHistory, pricePeriod],
+  );
+  const divFiltered = useMemo(
+    () => sliceByPeriod(_dividendHistory, PERIODS.find(p => p.label === divPeriod)!.months),
+    [_dividendHistory, divPeriod],
+  );
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-96 gap-3 text-muted-foreground">
@@ -87,8 +111,8 @@ export default function FIIDetailPage() {
   const fund = fii.fundamentals as Record<string, number>;
   const evaluation = fii.evaluation as Record<string, number | string>;
   const scoreBreakdown = (fii as any).score_breakdown as Record<string, number> | undefined;
-  const priceHistory: { month: string; price: number }[] = (fii as any).price_history ?? [];
-  const dividendHistory: { month: string; value: number }[] = (fii as any).dividend_history ?? [];
+  const priceHistory    = _priceHistory;
+  const dividendHistory = _dividendHistory;
   const fundInfo: Record<string, string | number | null> = (fii as any).fund_info ?? {};
 
   const totalScore = scoreBreakdown?.total ?? Number(evaluation.score_final || 0);
@@ -103,22 +127,6 @@ export default function FIIDetailPage() {
       : confidence >= 50
       ? "bg-yellow-500/15 text-yellow-500 border-yellow-500/30"
       : "bg-destructive/15 text-destructive border-destructive/30";
-
-  // Chart period filter
-  const PERIODS = [
-    { label: "3M",  months: 3 },
-    { label: "6M",  months: 6 },
-    { label: "1A",  months: 12 },
-    { label: "2A",  months: 24 },
-  ] as const;
-  type Period = typeof PERIODS[number]["label"];
-  const [pricePeriod,   setPricePeriod]   = useState<Period>("1A");
-  const [divPeriod,     setDivPeriod]     = useState<Period>("1A");
-
-  const sliceByPeriod = <T,>(data: T[], months: number) => data.slice(-months);
-
-  const priceFiltered   = useMemo(() => sliceByPeriod(priceHistory,    PERIODS.find(p => p.label === pricePeriod)!.months), [priceHistory,    pricePeriod]);
-  const divFiltered     = useMemo(() => sliceByPeriod(dividendHistory,  PERIODS.find(p => p.label === divPeriod)!.months),   [dividendHistory,  divPeriod]);
 
   const indicators = [
     { label: "Dividend Yield (12M)", value: `${((fund.dividend_yield || 0) * 100).toFixed(1)}%`, status: (fund.dividend_yield || 0) >= 0.07 ? "good" : "neutral" },
