@@ -48,7 +48,8 @@ from core.fii_telegram import (
     notify_fii_loop_error,
     send_message,
 )
-from core.fii_ledger import connect_fii_db, save_fii_snapshot
+from core.fii_ledger import connect_fii_db, save_fii_snapshot, get_fii_score_deltas_bulk
+from core.fii_macro_engine import fetch_macro_context, macro_summary_line
 from core.logger import logger
 
 # ---------------------------------------------------------------------------
@@ -133,6 +134,19 @@ def _run_iteration(state: dict, iteration: int) -> dict:
     ranked = rank_fiis(fiis_for_ranking)
     logger.info("fii_loop: scored %d FIIs", len(ranked))
 
+    # --- Macro context (BCB SELIC + IPCA) — cached 6h, never raises ---
+    macro = fetch_macro_context()
+    m_line = macro_summary_line(macro)
+    logger.info("fii_loop: %s", m_line)
+
+    # --- Apply macro score modifiers ---
+    for fii in ranked:
+        sec = sector_map.get(fii["ticker"], "Outros")
+        bonus = macro.score_modifiers.get(sec, 0.0) + macro.score_modifiers.get("global", 0.0)
+        if bonus != 0.0:
+            fii["alpha_score"] = round(max(0.0, min(100.0, fii["alpha_score"] + bonus)), 2)
+            fii["_macro_bonus"] = bonus
+
     # --- Snapshot warehouse: persist raw + scores for every FII every day ---
     today_str = datetime.date.today().isoformat()
     snap_conn = connect_fii_db()
@@ -165,6 +179,9 @@ def _run_iteration(state: dict, iteration: int) -> dict:
     snap_conn.close()
     logger.info("fii_loop: snapshots saved for %d FIIs (%s)", len(ranked), today_str)
 
+    # --- Score deltas (30d momentum) — single bulk query ---
+    score_deltas = get_fii_score_deltas_bulk(connect_fii_db(), tickers, days=30)
+
     prev_scores: dict[str, float] = state.get("scores", {})
     new_scores: dict[str, float] = {}
     alerted: list[str] = []
@@ -181,11 +198,11 @@ def _run_iteration(state: dict, iteration: int) -> dict:
         i_score  = fii.get("income_score", 0.0)
         v_score  = fii.get("valuation_score", 0.0)
         r_score  = fii.get("risk_score", 50.0)
+        d30      = score_deltas.get(ticker.upper())
 
         new_scores[ticker] = score
 
         if prev is None:
-            # First time seeing this ticker — no alert, just record
             logger.info("fii_loop: %s first-seen score=%.1f", ticker, score)
             continue
 
@@ -200,7 +217,7 @@ def _run_iteration(state: dict, iteration: int) -> dict:
                 score=score, score_prev=prev,
                 dy=dy, pvp=pvp, price=price,
                 income_score=i_score, valuation_score=v_score, risk_score=r_score,
-                trigger=trigger,
+                trigger=trigger, score_delta_30d=d30, macro_line=m_line,
             )
             alerted.append(ticker)
             continue
@@ -213,7 +230,7 @@ def _run_iteration(state: dict, iteration: int) -> dict:
                 ticker=ticker, nome=nome, setor=setor,
                 score=score, score_prev=prev,
                 dy=dy, pvp=pvp, price=price,
-                trigger=trigger,
+                trigger=trigger, score_delta_30d=d30, macro_line=m_line,
             )
             alerted.append(ticker)
             continue
@@ -226,7 +243,7 @@ def _run_iteration(state: dict, iteration: int) -> dict:
                 ticker=ticker, nome=nome, setor=setor,
                 score=score, score_prev=prev,
                 dy=dy, pvp=pvp, price=price,
-                trigger=trigger,
+                trigger=trigger, score_delta_30d=d30, macro_line=m_line,
             )
             alerted.append(ticker)
 
@@ -234,7 +251,12 @@ def _run_iteration(state: dict, iteration: int) -> dict:
     today = time.strftime("%Y-%m-%d")
     if state.get("last_ranking_date") != today:
         logger.info("fii_loop: sending daily ranking top-5")
-        notify_fii_ranking(ranked, top_n=5)
+        notify_fii_ranking(
+            ranked, top_n=5,
+            sector_map=sector_map,
+            score_deltas=score_deltas,
+            macro_line=m_line,
+        )
         state["last_ranking_date"] = today
 
     logger.info(
