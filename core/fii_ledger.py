@@ -119,16 +119,17 @@ def get_fii_history(
     ticker: str,
     days: int = 90,
 ) -> list[dict]:
-    """Return daily snapshots for one ticker, newest first."""
+    """Return daily snapshots for one ticker within the last `days` calendar days, newest first."""
+    import datetime as _datetime
     try:
+        cutoff = (_datetime.date.today() - _datetime.timedelta(days=days)).isoformat()
         rows = conn.execute(
             """
             SELECT * FROM fii_daily_snapshot
-            WHERE ticker = ?
+            WHERE ticker = ? AND date >= ?
             ORDER BY date DESC
-            LIMIT ?
             """,
-            (ticker.upper(), days),
+            (ticker.upper(), cutoff),
         ).fetchall()
         return [dict(r) for r in rows]
     except sqlite3.Error as exc:
@@ -199,28 +200,24 @@ def get_fii_score_deltas_bulk(
     result: dict[str, float | None] = {t: None for t in upper}
     try:
         cutoff = (_datetime.date.today() - _datetime.timedelta(days=days)).isoformat()
+        # Plain ORDER BY — avoids MAX() OVER window functions (requires SQLite ≥ 3.25).
         rows = conn.execute(
             f"""
-            SELECT ticker,
-                   MAX(CASE WHEN date = max_date THEN alpha_score END) AS latest_score,
-                   MIN(CASE WHEN date >= ? THEN alpha_score END)        AS oldest_score,
-                   COUNT(DISTINCT date)                                  AS n_rows
-              FROM (
-                  SELECT ticker, date, alpha_score,
-                         MAX(date) OVER (PARTITION BY ticker) AS max_date
-                    FROM fii_daily_snapshot
-                   WHERE ticker IN ({param_marks})
-                     AND date >= ?
-              )
-             GROUP BY ticker
+            SELECT ticker, date, alpha_score
+              FROM fii_daily_snapshot
+             WHERE ticker IN ({param_marks})
+               AND date >= ?
+             ORDER BY ticker, date
             """,
-            (cutoff, *upper, cutoff),
+            (*upper, cutoff),
         ).fetchall()
+        # Group in Python: first row = oldest, last row = newest per ticker.
+        grouped: dict[str, list] = {}
         for row in rows:
-            if row["n_rows"] and row["n_rows"] >= 2:
-                result[row["ticker"]] = round(
-                    float(row["latest_score"]) - float(row["oldest_score"]), 2
-                )
+            grouped.setdefault(row["ticker"], []).append(float(row["alpha_score"]))
+        for ticker_upper, scores in grouped.items():
+            if len(scores) >= 2:
+                result[ticker_upper] = round(scores[-1] - scores[0], 2)
     except sqlite3.Error as exc:
         logger.warning("get_fii_score_deltas_bulk: %s", exc)
     return result

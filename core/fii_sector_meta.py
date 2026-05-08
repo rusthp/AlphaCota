@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from core.fii_macro_engine import MacroContext
 
+from core.logger import logger
 from core.score_engine import DEFAULT_WEIGHTS
 
 # ---------------------------------------------------------------------------
@@ -280,9 +281,16 @@ def apply_zscore_normalization(
         meta = sector_meta.get(sec)
         sc   = fii["alpha_score"]
 
-        if meta is None or meta.score_std == 0.0:
-            fii["sector_zscore"]    = 0.0
-            fii["sector_percentile"] = 1.0
+        if meta is None:
+            logger.warning("apply_zscore_normalization: no SectorMeta for sector '%s' (ticker %s)",
+                           sec, fii.get("ticker"))
+            fii["sector_zscore"]     = 0.0
+            fii["sector_percentile"] = None
+            continue
+        if meta.score_std == 0.0:
+            # Single-member or perfectly homogeneous sector — z-score undefined.
+            fii["sector_zscore"]     = 0.0
+            fii["sector_percentile"] = None
             continue
 
         fii["sector_zscore"] = round((sc - meta.avg_score) / meta.score_std, 3)

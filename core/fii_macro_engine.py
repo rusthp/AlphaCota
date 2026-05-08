@@ -118,7 +118,9 @@ def _compute_selic_trend(
     if not daily_vals:
         return (0.0, 0.0, 0.0, "stable")
 
-    annual = [v * 252 for v in daily_vals]
+    # Compound annualisation: BCB série 11 returns % a.d. — e.g. 0.0519 means 0.0519%/day.
+    # (1 + v/100)^252 - 1 gives the true effective annual rate.
+    annual = [round(((1 + v / 100) ** 252 - 1) * 100, 6) for v in daily_vals]
     current = annual[-1]
 
     n3 = min(63, len(annual))
@@ -180,7 +182,11 @@ def fetch_macro_context() -> MacroContext:
         # IPCA monthly: last 13 obs → sum last 12 for 12-month accumulated %
         ipca_raw = _bcb_latest(_IPCA_SERIES, 13)
         ipca_vals = [_float_val(r) for r in ipca_raw if r.get("valor") not in (None, "")]
-        ipca_12m = round(sum(ipca_vals[-12:]), 4) if len(ipca_vals) >= 12 else 0.0
+        if len(ipca_vals) >= 12:
+            ipca_12m = round(sum(ipca_vals[-12:]), 4)
+        else:
+            logger.warning("macro: only %d valid IPCA months returned (need 12) — using 0.0", len(ipca_vals))
+            ipca_12m = 0.0
 
         real_rate = round(annual - ipca_12m, 4)
         modifiers = _build_modifiers(trend, ipca_12m, real_rate)

@@ -126,7 +126,11 @@ def _get_cached(
     if age.total_seconds() > ttl_hours * 3600:
         return None  # Cache expirado
 
-    data = json.loads(row["data_json"])
+    try:
+        data = json.loads(row["data_json"])
+    except json.JSONDecodeError as exc:
+        logger.warning("_get_cached: corrupt cache entry for %s — %s", row.get("ticker", "?"), exc)
+        return None
     data["_cache_age_hours"] = round(age.total_seconds() / 3600, 1)
     data["_source"] = "cache"
     return data
@@ -166,7 +170,11 @@ def _get_stale_cache(conn: sqlite3.Connection, ticker: str) -> Optional[dict]:
     if not row:
         return None
 
-    data = json.loads(row["data_json"])
+    try:
+        data = json.loads(row["data_json"])
+    except json.JSONDecodeError as exc:
+        logger.warning("_get_stale_cache: corrupt cache entry — %s", exc)
+        return None
     data["_source"] = "stale_cache"
     fetched_at = datetime.datetime.fromisoformat(row["fetched_at"])
     age = datetime.datetime.now() - fetched_at
@@ -218,7 +226,8 @@ def _enrich_with_history(result: dict, ticker: str) -> dict:
             result["dividend_consistency"] = None
         else:
             non_zero = (df_24m["dividend"] > 0).sum()
-            result["dividend_consistency"] = round(non_zero / 24, 4)
+            # Denominator = actual months available (not always 24 for new FIIs).
+            result["dividend_consistency"] = round(non_zero / max(len(df_24m), 1), 4)
 
         # --- revenue_growth_12m / earnings_growth_12m ---
         cutoff_6m = now - pd.DateOffset(months=6)
@@ -298,8 +307,13 @@ def _scrape_status_invest(ticker: str) -> Optional[dict]:
             headers={"User-Agent": _USER_AGENT},
             timeout=15,
         )
+        if response.status_code == 429:
+            retry_after = int(response.headers.get("Retry-After", 60))
+            logger.warning("fundamentals_scraper: HTTP 429 for %s — backing off %ds", ticker_clean, retry_after)
+            time.sleep(retry_after)
+            return None
         if response.status_code != 200:
-            logger.warning(f"Status Invest retornou {response.status_code} para {ticker_clean}")
+            logger.warning("fundamentals_scraper: HTTP %d for %s", response.status_code, ticker_clean)
             return None
 
         soup = BeautifulSoup(response.text, "html.parser")

@@ -324,8 +324,14 @@ def _analytics_from_history(history: list[dict]) -> dict:
     acc  = compute_score_acceleration(history, window=14)
     da80 = compute_score_persistence(history, threshold=80.0, above=True)
     db45 = compute_score_persistence(history, threshold=45.0, above=False)
-    score_latest  = history[0]["alpha_score"]
-    score_30d_ago = history[-1]["alpha_score"] if len(history) >= 2 else None
+    score_latest = history[0]["alpha_score"]
+    # Find the snapshot closest to 30 calendar days ago (history is newest-first).
+    cutoff_30d = _cutoff_date(30)
+    score_30d_ago: float | None = None
+    for row in reversed(history):   # oldest-first scan — stop at first entry ≥ cutoff
+        if row["date"] >= cutoff_30d:
+            score_30d_ago = row["alpha_score"]
+            break
     if v7 is None:
         trend = "unknown"
     elif v7 >= 0.5:

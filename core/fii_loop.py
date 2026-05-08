@@ -221,6 +221,9 @@ def _run_iteration(state: dict, iteration: int) -> dict:
 
     # --- Universe ---
     universe = get_universe(ifix_only=True)
+    if not universe:
+        logger.warning("fii_loop: universe is empty — skipping iteration")
+        return state
     sector_map = get_sector_map()
     tickers = [fii["ticker"] for fii in universe]
     name_map = {fii["ticker"]: fii["nome"] for fii in universe}
@@ -299,42 +302,51 @@ def _run_iteration(state: dict, iteration: int) -> dict:
 
     # --- Snapshot warehouse: persist raw + scores for every FII every day ---
     today_str = datetime.date.today().isoformat()
-    snap_conn = connect_fii_db()
     now_ts = time.time()
-    for fii in ranked:
-        fund = fundamentals.get(fii["ticker"], {})
-        save_fii_snapshot(snap_conn, {
-            "ticker": fii["ticker"],
-            "date": today_str,
-            "price": fii.get("_price", 0.0),
-            "monthly_div": fii.get("_monthly_div", 0.0),
-            "dividend_yield": fii.get("dividend_yield", 0.0),
-            "pvp": fii.get("pvp", 1.0),
-            "dividend_consistency": fii.get("dividend_consistency", 50.0),
-            "debt_ratio": fii.get("debt_ratio"),
-            "vacancy_rate": fii.get("vacancy_rate"),
-            "revenue_growth_12m": fii.get("revenue_growth_12m", 0.0),
-            "earnings_growth_12m": fii.get("earnings_growth_12m", 0.0),
-            "daily_liquidity": fund.get("daily_liquidity", 0.0),
-            "news_sentiment": fii.get("news_sentiment", 0.0),
-            "alpha_score": fii.get("alpha_score", 0.0),
-            "income_score": fii.get("income_score", 0.0),
-            "valuation_score": fii.get("valuation_score", 0.0),
-            "risk_score": fii.get("risk_score", 50.0),
-            "growth_score": fii.get("growth_score", 0.0),
-            "news_sentiment_score": fii.get("news_sentiment_score", 50.0),
-            "data_source": fund.get("_source", "unknown"),
-            "created_at": now_ts,
-        })
-    snap_conn.close()
-    logger.info("fii_loop: snapshots saved for %d FIIs (%s)", len(ranked), today_str)
+    try:
+        snap_conn = connect_fii_db()
+        for fii in ranked:
+            fund = fundamentals.get(fii["ticker"], {})
+            save_fii_snapshot(snap_conn, {
+                "ticker": fii["ticker"],
+                "date": today_str,
+                "price": fii.get("_price", 0.0),
+                "monthly_div": fii.get("_monthly_div", 0.0),
+                "dividend_yield": fii.get("dividend_yield", 0.0),
+                "pvp": fii.get("pvp", 1.0),
+                "dividend_consistency": fii.get("dividend_consistency", 50.0),
+                "debt_ratio": fii.get("debt_ratio"),
+                "vacancy_rate": fii.get("vacancy_rate"),
+                "revenue_growth_12m": fii.get("revenue_growth_12m", 0.0),
+                "earnings_growth_12m": fii.get("earnings_growth_12m", 0.0),
+                "daily_liquidity": fund.get("daily_liquidity", 0.0),
+                "news_sentiment": fii.get("news_sentiment", 0.0),
+                "alpha_score": fii.get("alpha_score", 0.0),
+                "income_score": fii.get("income_score", 0.0),
+                "valuation_score": fii.get("valuation_score", 0.0),
+                "risk_score": fii.get("risk_score", 50.0),
+                "growth_score": fii.get("growth_score", 0.0),
+                "news_sentiment_score": fii.get("news_sentiment_score", 50.0),
+                "data_source": fund.get("_source", "unknown"),
+                "created_at": now_ts,
+            })
+        snap_conn.close()
+        logger.info("fii_loop: snapshots saved for %d FIIs (%s)", len(ranked), today_str)
+    except Exception as exc:
+        logger.error("fii_loop: snapshot DB write failed (non-fatal): %s", exc)
 
     # --- Score deltas + velocity analytics + relative strength ---
-    analytics_conn  = connect_fii_db()
-    score_deltas    = get_fii_score_deltas_bulk(analytics_conn, tickers, days=30)
-    score_analytics = get_universe_analytics(analytics_conn, tickers, days=60)
-    rs_map          = get_relative_strength_bulk(analytics_conn, tickers, days=30)
-    analytics_conn.close()
+    try:
+        analytics_conn  = connect_fii_db()
+        score_deltas    = get_fii_score_deltas_bulk(analytics_conn, tickers, days=30)
+        score_analytics = get_universe_analytics(analytics_conn, tickers, days=60)
+        rs_map          = get_relative_strength_bulk(analytics_conn, tickers, days=30)
+        analytics_conn.close()
+    except Exception as exc:
+        logger.error("fii_loop: analytics DB read failed (non-fatal): %s", exc)
+        score_deltas:    dict[str, float | None] = {t: None for t in tickers}
+        score_analytics: dict[str, dict]         = {}
+        rs_map:          dict[str, float | None] = {t: None for t in tickers}
 
     # --- Sector meta-score + rotation bonus + cross-sector z-score ---
     sector_meta = compute_sector_meta(ranked, sector_map, score_analytics)
@@ -437,6 +449,9 @@ def _run_iteration(state: dict, iteration: int) -> dict:
             alert_states[ticker] = "neutral"
             consec_above[ticker] = 0
 
+        # Refresh state snapshot so SELL/DROP see post-BUY transitions.
+        cur_state = alert_states.get(ticker, "neutral")
+
         # SELL: persistent below entry, not already sell_active, confidence OK
         if (score < _SELL_ENTRY
                 and consec_below.get(ticker, 0) >= _PERSIST_CYCLES
@@ -467,6 +482,9 @@ def _run_iteration(state: dict, iteration: int) -> dict:
         elif cur_state == "sell_active" and score >= _SELL_HYSTER:
             alert_states[ticker] = "neutral"
             consec_below[ticker] = 0
+
+        # Refresh state snapshot so DROP sees post-SELL transition.
+        cur_state = alert_states.get(ticker, "neutral")
 
         # DROP: sharp fall in one cycle — fires regardless of state
         if (delta <= -_DROP_ALERT
