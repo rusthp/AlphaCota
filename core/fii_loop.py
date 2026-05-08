@@ -25,6 +25,7 @@ import argparse
 import json
 import os
 import signal
+import threading
 import time
 from pathlib import Path
 from types import FrameType
@@ -194,7 +195,7 @@ def _run_iteration(state: dict, iteration: int) -> dict:
         pvp      = fii["pvp"]
         price    = fii.get("_price", 0.0)
         setor    = sector_map.get(ticker, "Outros")
-        nome     = name_map.get(ticker, ticker)
+        nome     = name_map.get(ticker) or ticker
         i_score  = fii.get("income_score", 0.0)
         v_score  = fii.get("valuation_score", 0.0)
         r_score  = fii.get("risk_score", 50.0)
@@ -273,12 +274,14 @@ def _run_iteration(state: dict, iteration: int) -> dict:
 # ---------------------------------------------------------------------------
 
 _running = True
+_stop_event = threading.Event()
 
 
-def _handle_sigterm(sig: int, frame: FrameType | None) -> None:
+def _handle_sigterm(_sig: int, _frame: FrameType | None) -> None:
     global _running
     logger.info("fii_loop: SIGTERM received — shutting down")
     _running = False
+    _stop_event.set()   # wake the interruptible sleep immediately
 
 
 # ---------------------------------------------------------------------------
@@ -324,7 +327,8 @@ def main() -> None:
 
         iteration += 1
         logger.info("fii_loop: sleeping %ds", args.interval)
-        time.sleep(args.interval)
+        _stop_event.wait(timeout=args.interval)
+        _stop_event.clear()
 
     logger.info("fii_loop: stopped at iteration %d", iteration)
 

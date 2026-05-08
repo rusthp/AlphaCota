@@ -13,10 +13,12 @@ WorkingDirectory=/root/alphacota
 #   TELEGRAM_CHAT_ID=-5248803958   (Alerta Fii group chat id)
 #   FII_LOOP_INTERVAL_SECONDS=...  (optional, default 21600 = 6h)
 EnvironmentFile=/root/alphacota/.env
+Environment=PYTHONPATH=/root/alphacota
 
-ExecStart=/usr/bin/python3 -m core.fii_loop
+ExecStart=/root/alphacota/venv/bin/python3 -m core.fii_loop
 Restart=on-failure
 RestartSec=60
+TimeoutStopSec=15
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=alphacota-fii
