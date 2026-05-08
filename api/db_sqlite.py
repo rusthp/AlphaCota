@@ -1,6 +1,7 @@
 import sqlite3
 import json
 import os
+import time
 from pathlib import Path
 from datetime import datetime
 
@@ -35,7 +36,13 @@ def create_tables():
                 reason TEXT
             )
         ''')
-        # Create indexes for fast retrieval
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS deep_analysis_cache (
+                ticker TEXT PRIMARY KEY,
+                result_json TEXT NOT NULL,
+                cached_at REAL NOT NULL
+            )
+        ''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_score_ticker ON score_history (ticker)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_sentiment_ticker ON sentiment_history (ticker)')
         conn.commit()
@@ -107,6 +114,33 @@ def get_sentiment_trend(ticker: str, limit: int = 5):
             "reason": row["reason"]
         })
     return result[::-1]
+
+_DEEP_ANALYSIS_TTL = 21_600.0  # 6 hours
+
+
+def save_deep_analysis(ticker: str, result: dict) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO deep_analysis_cache (ticker, result_json, cached_at) VALUES (?, ?, ?)",
+            (ticker.upper(), json.dumps(result), time.time()),
+        )
+        conn.commit()
+
+
+def get_deep_analysis(ticker: str, ttl_seconds: float = _DEEP_ANALYSIS_TTL) -> dict | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT result_json, cached_at FROM deep_analysis_cache WHERE ticker = ?",
+            (ticker.upper(),),
+        ).fetchone()
+    if row is None:
+        return None
+    if time.time() - row["cached_at"] > ttl_seconds:
+        return None
+    result = json.loads(row["result_json"])
+    result["_cached_at"] = datetime.fromtimestamp(row["cached_at"]).strftime("%d/%m/%Y %H:%M")
+    return result
+
 
 def get_score_alerts(tickers: list[str], drop_threshold: float = 10.0):
     """

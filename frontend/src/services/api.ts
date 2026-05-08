@@ -317,10 +317,10 @@ export function fetchAIAnalysis(ticker: string, apiKey?: string): Promise<AIAnal
 }
 
 /** Deep pipeline analysis — 5 agents (Macro → Fundamental → Risk → Persona → Decision) */
-export function fetchDeepAnalysis(ticker: string, apiKey?: string): Promise<DeepAnalysisResult> {
+export function fetchDeepAnalysis(ticker: string, apiKey?: string, forceRefresh = false): Promise<DeepAnalysisResult> {
   return fetchJSON(`/api/ai/deep-analysis/${ticker.toUpperCase()}`, {
     method: "POST",
-    body: JSON.stringify({ api_key: apiKey }),
+    body: JSON.stringify({ api_key: apiKey, force_refresh: forceRefresh }),
   });
 }
 

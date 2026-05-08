@@ -57,6 +57,11 @@ from core.fii_macro_engine import fetch_macro_context, macro_summary_line
 from core.fii_score_analytics import get_universe_analytics, get_relative_strength_bulk
 from core.logger import logger
 
+try:
+    from api.db_sqlite import get_deep_analysis as _get_cached_ai
+except Exception:
+    _get_cached_ai = lambda ticker: None  # noqa: E731
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -428,6 +433,8 @@ def _run_iteration(state: dict, iteration: int) -> dict:
                 f"por {_PERSIST_CYCLES} ciclos consecutivos"
             )
             logger.info("fii_loop: BUY alert %s score=%.1f conf=%.2f", ticker, score, conf)
+            _ai = _get_cached_ai(ticker) or {}
+            _ai_fd = _ai.get("final_decision") or {}
             notify_fii_buy(
                 ticker=ticker, nome=nome, setor=setor,
                 score=score, score_prev=prev,
@@ -436,6 +443,9 @@ def _run_iteration(state: dict, iteration: int) -> dict:
                 trigger=trigger, score_delta_30d=d30, macro_line=m_line,
                 velocity_7d=vel7, trend=trend,
                 rs30=rs30, sector_zscore=sz, sector_percentile=spct,
+                ai_rec=_ai_fd.get("recomendacao"),
+                ai_rating=_ai_fd.get("rating"),
+                ai_tese=_ai_fd.get("tese"),
             )
             alert_states[ticker]   = "buy_active"
             last_alert_map[ticker] = {"type": "buy", "ts": time.time()}
@@ -463,6 +473,8 @@ def _run_iteration(state: dict, iteration: int) -> dict:
                 f"por {_PERSIST_CYCLES} ciclos consecutivos"
             )
             logger.info("fii_loop: SELL alert %s score=%.1f conf=%.2f", ticker, score, conf)
+            _ai_s = _get_cached_ai(ticker) or {}
+            _ai_sfd = _ai_s.get("final_decision") or {}
             notify_fii_sell(
                 ticker=ticker, nome=nome, setor=setor,
                 score=score, score_prev=prev,
@@ -470,6 +482,9 @@ def _run_iteration(state: dict, iteration: int) -> dict:
                 trigger=trigger, score_delta_30d=d30, macro_line=m_line,
                 velocity_7d=vel7, trend=trend,
                 rs30=rs30, sector_zscore=sz, sector_percentile=spct,
+                ai_rec=_ai_sfd.get("recomendacao"),
+                ai_rating=_ai_sfd.get("rating"),
+                ai_tese=_ai_sfd.get("tese"),
             )
             alert_states[ticker]   = "sell_active"
             last_alert_map[ticker] = {"type": "sell", "ts": time.time()}
@@ -493,6 +508,8 @@ def _run_iteration(state: dict, iteration: int) -> dict:
                 and _cooldown_ok(last_alert_map, ticker, "drop")):
             trigger = f"queda de {abs(delta):.1f} pts em um ciclo (era {prev:.1f})"
             logger.info("fii_loop: DROP alert %s Δ=%.1f conf=%.2f", ticker, delta, conf)
+            _ai_d = _get_cached_ai(ticker) or {}
+            _ai_dfd = _ai_d.get("final_decision") or {}
             notify_fii_sell(
                 ticker=ticker, nome=nome, setor=setor,
                 score=score, score_prev=prev,
@@ -500,6 +517,9 @@ def _run_iteration(state: dict, iteration: int) -> dict:
                 trigger=trigger, score_delta_30d=d30, macro_line=m_line,
                 velocity_7d=vel7, trend=trend,
                 rs30=rs30, sector_zscore=sz, sector_percentile=spct,
+                ai_rec=_ai_dfd.get("recomendacao"),
+                ai_rating=_ai_dfd.get("rating"),
+                ai_tese=_ai_dfd.get("tese"),
             )
             last_alert_map[ticker] = {"type": "drop", "ts": time.time()}
             alerted.append(ticker)

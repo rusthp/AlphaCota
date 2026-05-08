@@ -147,6 +147,7 @@ class AIBatchRequest(BaseModel):
 
 class DeepAnalysisRequest(BaseModel):
     api_key: Optional[str] = None
+    force_refresh: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -1034,8 +1035,18 @@ def ai_deep_analysis(ticker: str, req: DeepAnalysisRequest = DeepAnalysisRequest
 
     Executa 5 agentes em sequência (Macro → Fundamental → Risk → Persona → Decision)
     e retorna raciocínio auditável por etapa + recomendação final BUY/HOLD/SELL.
+
+    Resultados são cacheados por 6h no SQLite. Use force_refresh=true para forçar
+    nova execução independentemente do cache.
     """
+    from api.db_sqlite import get_deep_analysis, save_deep_analysis
+
     ticker = ticker.upper()
+
+    if not req.force_refresh:
+        cached = get_deep_analysis(ticker)
+        if cached is not None:
+            return cached
 
     # --- montar fii_data (mesmo formato que /api/fii/{ticker}) ---
     fund = fetch_fundamentals(ticker)
@@ -1088,6 +1099,7 @@ def ai_deep_analysis(ticker: str, req: DeepAnalysisRequest = DeepAnalysisRequest
         news = []
 
     result = run_deep_analysis(ticker, fii_data, macro, news, api_key=req.api_key)
+    save_deep_analysis(ticker, result)
     return result
 
 

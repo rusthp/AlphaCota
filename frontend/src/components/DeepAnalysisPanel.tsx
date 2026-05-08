@@ -81,14 +81,16 @@ export default function DeepAnalysisPanel({ ticker }: Props) {
   const [result, setResult] = useState<DeepAnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fromCache, setFromCache] = useState(false);
 
-  const run = useCallback(async () => {
+  const run = useCallback(async (forceRefresh = false) => {
     if (loading) return;
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchDeepAnalysis(ticker);
+      const data = await fetchDeepAnalysis(ticker, undefined, forceRefresh);
       setResult(data);
+      setFromCache(!forceRefresh && !!(data as any)._cached_at);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro ao conectar com a API.");
     } finally {
@@ -110,20 +112,45 @@ export default function DeepAnalysisPanel({ ticker }: Props) {
               <Brain className="w-4 h-4 text-primary" />
               Análise Profunda (Multi-Agente)
             </CardTitle>
-            <CardDescription>5 agentes IA: Macro → Fundamentos → Risco → Personas → Decisão</CardDescription>
+            <CardDescription className="flex items-center gap-2">
+              5 agentes IA: Macro → Fundamentos → Risco → Personas → Decisão
+              {fromCache && (result as any)?._cached_at && (
+                <Badge variant="outline" className="text-[10px] border-muted-foreground/30 text-muted-foreground">
+                  cache {(result as any)._cached_at}
+                </Badge>
+              )}
+            </CardDescription>
           </div>
-          <Button
-            size="sm"
-            variant={result ? "outline" : "default"}
-            onClick={run}
-            disabled={loading}
-            className="gap-1.5"
-          >
-            {loading
-              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              : <Sparkles className="w-3.5 h-3.5" />}
-            {result ? "Reanalisar" : "Analisar"}
-          </Button>
+          <div className="flex gap-1.5">
+            {result && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => run(true)}
+                disabled={loading}
+                className="gap-1.5 text-xs text-muted-foreground"
+                title="Forçar nova análise (ignora cache)"
+              >
+                <Sparkles className="w-3 h-3" />
+                Reanalisar
+              </Button>
+            )}
+            {!result && (
+              <Button
+                size="sm"
+                variant="default"
+                onClick={() => run(false)}
+                disabled={loading}
+                className="gap-1.5"
+              >
+                {loading
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <Sparkles className="w-3.5 h-3.5" />}
+                Analisar
+              </Button>
+            )}
+            {result && loading && <Loader2 className="w-4 h-4 animate-spin self-center text-muted-foreground" />}
+          </div>
         </div>
       </CardHeader>
 

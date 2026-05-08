@@ -131,6 +131,9 @@ def notify_fii_buy(
     rs30: float | None = None,
     sector_zscore: float | None = None,
     sector_percentile: float | None = None,
+    ai_rec: str | None = None,
+    ai_rating: str | None = None,
+    ai_tese: str | None = None,
 ) -> None:
     """Alert when FII score crosses BUY threshold."""
     icon = _sector_icon(setor)
@@ -140,6 +143,8 @@ def notify_fii_buy(
     vel_line  = _velocity_line(velocity_7d, trend)
     rank_line = _sector_rank_line(sector_zscore, sector_percentile, setor)
     rs_ln     = _rs_line(rs30)
+    ai_line   = f"🤖 IA: <b>{ai_rec}</b> (Rating {ai_rating})" if ai_rec and ai_rating else ""
+    ai_tese_line = f"💬 <i>{ai_tese[:120]}…</i>" if ai_tese else ""
 
     text = (
         f"🟢 <b>OPORTUNIDADE FII</b>\n"
@@ -154,6 +159,8 @@ def notify_fii_buy(
         f"📐 P/VP: <b>{pvp:.2f}</b>\n"
         f"💵 Preço: <b>R$ {price:.2f}</b>\n"
         f"📈 Renda: {income_score:.0f} | Valuation: {valuation_score:.0f} | Risco: {risk_score:.0f}\n"
+        + (f"{ai_line}\n" if ai_line else "")
+        + (f"{ai_tese_line}\n" if ai_tese_line else "")
         + (f"{macro_line}\n" if macro_line else "")
         + f"✅ Gatilho: <i>{trigger}</i>\n"
         f"⏰ {time.strftime('%d/%m/%Y %H:%M')}"
@@ -178,6 +185,9 @@ def notify_fii_sell(
     rs30: float | None = None,
     sector_zscore: float | None = None,
     sector_percentile: float | None = None,
+    ai_rec: str | None = None,
+    ai_rating: str | None = None,
+    ai_tese: str | None = None,
 ) -> None:
     """Alert when FII score drops below EXIT threshold or deteriorates sharply."""
     icon = _sector_icon(setor)
@@ -186,6 +196,8 @@ def notify_fii_sell(
     vel_line  = _velocity_line(velocity_7d, trend)
     rank_line = _sector_rank_line(sector_zscore, sector_percentile, setor)
     rs_ln     = _rs_line(rs30)
+    ai_line   = f"🤖 IA: <b>{ai_rec}</b> (Rating {ai_rating})" if ai_rec and ai_rating else ""
+    ai_tese_line = f"💬 <i>{ai_tese[:120]}…</i>" if ai_tese else ""
 
     text = (
         f"🔴 <b>DETERIORAÇÃO FII</b>\n"
@@ -199,6 +211,8 @@ def notify_fii_sell(
         + f"💰 DY (12m): <b>{dy*100:.1f}%</b>\n"
         f"📐 P/VP: <b>{pvp:.2f}</b>\n"
         f"💵 Preço: <b>R$ {price:.2f}</b>\n"
+        + (f"{ai_line}\n" if ai_line else "")
+        + (f"{ai_tese_line}\n" if ai_tese_line else "")
         + (f"{macro_line}\n" if macro_line else "")
         + f"⚠️ Gatilho: <i>{trigger}</i>\n"
         f"⏰ {time.strftime('%d/%m/%Y %H:%M')}"
