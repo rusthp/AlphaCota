@@ -35,6 +35,8 @@ try:
 except ImportError:
     pass
 
+import datetime
+
 from data.fundamentals_scraper import fetch_fundamentals_bulk
 from data.data_bridge import load_last_price, load_monthly_dividend
 from data.universe import get_universe, get_sector_map
@@ -46,6 +48,7 @@ from core.fii_telegram import (
     notify_fii_loop_error,
     send_message,
 )
+from core.fii_ledger import connect_fii_db, save_fii_snapshot
 from core.logger import logger
 
 # ---------------------------------------------------------------------------
@@ -129,6 +132,38 @@ def _run_iteration(state: dict, iteration: int) -> dict:
     # --- Score ---
     ranked = rank_fiis(fiis_for_ranking)
     logger.info("fii_loop: scored %d FIIs", len(ranked))
+
+    # --- Snapshot warehouse: persist raw + scores for every FII every day ---
+    today_str = datetime.date.today().isoformat()
+    snap_conn = connect_fii_db()
+    now_ts = time.time()
+    for fii in ranked:
+        fund = fundamentals.get(fii["ticker"], {})
+        save_fii_snapshot(snap_conn, {
+            "ticker": fii["ticker"],
+            "date": today_str,
+            "price": fii.get("_price", 0.0),
+            "monthly_div": fii.get("_monthly_div", 0.0),
+            "dividend_yield": fii.get("dividend_yield", 0.0),
+            "pvp": fii.get("pvp", 1.0),
+            "dividend_consistency": fii.get("dividend_consistency", 50.0),
+            "debt_ratio": fii.get("debt_ratio"),
+            "vacancy_rate": fii.get("vacancy_rate"),
+            "revenue_growth_12m": fii.get("revenue_growth_12m", 0.0),
+            "earnings_growth_12m": fii.get("earnings_growth_12m", 0.0),
+            "daily_liquidity": fund.get("daily_liquidity", 0.0),
+            "news_sentiment": fii.get("news_sentiment", 0.0),
+            "alpha_score": fii.get("alpha_score", 0.0),
+            "income_score": fii.get("income_score", 0.0),
+            "valuation_score": fii.get("valuation_score", 0.0),
+            "risk_score": fii.get("risk_score", 50.0),
+            "growth_score": fii.get("growth_score", 0.0),
+            "news_sentiment_score": fii.get("news_sentiment_score", 50.0),
+            "data_source": fund.get("_source", "unknown"),
+            "created_at": now_ts,
+        })
+    snap_conn.close()
+    logger.info("fii_loop: snapshots saved for %d FIIs (%s)", len(ranked), today_str)
 
     prev_scores: dict[str, float] = state.get("scores", {})
     new_scores: dict[str, float] = {}

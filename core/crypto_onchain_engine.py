@@ -42,7 +42,7 @@ _CACHE_TTL = 900.0  # 15 minutes — matches 15m candle interval
 #   Taker ratio:  0.5 = neutral; ±0.1 from neutral is a strong lean.
 _FUNDING_NORM   = 0.0003   # 0.03%
 _OI_NORM        = 0.02     # 2%
-_LS_NORM        = 0.8      # ratio deviation from 1.0
+_LS_NORM        = 1.2      # ratio deviation from 1.0; raised from 0.8 — crypto stays crowded-long in bull trends
 _TAKER_NORM     = 0.10     # deviation from 0.5 (neutral)
 _TAKER_EXTREME  = 0.8      # |score| above which aggression is slightly degraded
 

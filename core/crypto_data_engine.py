@@ -167,7 +167,8 @@ def get_top_pairs(
     # Stablecoin base assets — always ranging, never generate tradeable signals.
     _stablecoin_bases = frozenset(
         ("USDC", "FDUSD", "BUSD", "TUSD", "USDP", "USDD", "DAI", "FRAX",
-         "USDE", "USDX", "PYUSD", "GUSD", "SUSD", "CRVUSD", "ALUSD")
+         "USDE", "USDX", "PYUSD", "GUSD", "SUSD", "CRVUSD", "ALUSD",
+         "USD1", "USDT1", "EURC", "EUROC", "EURS", "XSGD", "XCHF")
     )
 
     candidates: list[tuple[str, float]] = []
@@ -234,3 +235,30 @@ def fetch_order_book_imbalance(symbol: str) -> float:
     imbalance = (bid_vol - ask_vol) / total
     # Clamp defensively to protect downstream consumers.
     return max(-1.0, min(1.0, imbalance))
+
+
+def fetch_order_book(symbol: str, limit: int = 20) -> dict:
+    """Return top N bid/ask levels from Binance depth endpoint.
+
+    Returns:
+        {"bids": [[price, qty], ...], "asks": [[price, qty], ...], "imbalance": float}
+        All values are floats. Lists are sorted bids-desc / asks-asc.
+    """
+    try:
+        raw = _get_json("/api/v3/depth", {"symbol": symbol.upper(), "limit": limit})
+    except Exception as exc:
+        logger.warning("fetch_order_book(%s): %s", symbol, exc)
+        return {"bids": [], "asks": [], "imbalance": 0.0}
+
+    if not isinstance(raw, dict):
+        return {"bids": [], "asks": [], "imbalance": 0.0}
+
+    bids = [[float(p), float(q)] for p, q in raw.get("bids", [])]
+    asks = [[float(p), float(q)] for p, q in raw.get("asks", [])]
+
+    bid_vol = sum(q for _, q in bids)
+    ask_vol = sum(q for _, q in asks)
+    total = bid_vol + ask_vol
+    imbalance = round((bid_vol - ask_vol) / total, 4) if total > 0 else 0.0
+
+    return {"bids": bids, "asks": asks, "imbalance": imbalance}

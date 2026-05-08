@@ -103,7 +103,7 @@ _INITIAL_BALANCE = float(os.getenv("CRYPTO_INITIAL_BALANCE_USD", "1000.0"))
 _TOP_PAIRS_LIMIT = 15
 _PNL_SNAPSHOT_EVERY = 12
 # Skip a symbol when its last N trades show win rate below this threshold.
-_SYMBOL_WIN_RATE_WINDOW = int(os.getenv("CRYPTO_SYMBOL_WIN_RATE_WINDOW", "10"))
+_SYMBOL_WIN_RATE_WINDOW = int(os.getenv("CRYPTO_SYMBOL_WIN_RATE_WINDOW", "20"))
 _SYMBOL_MIN_WIN_RATE = float(os.getenv("CRYPTO_SYMBOL_MIN_WIN_RATE", "0.30"))
 _CANDLE_INTERVAL = "15m"
 _CANDLE_LIMIT = 100

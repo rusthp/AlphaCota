@@ -61,14 +61,22 @@ _WEIGHT_TECHNICAL = 0.75
 _WEIGHT_ONCHAIN   = 0.15
 _WEIGHT_NEWS      = 0.10
 
-# Thresholds.
-# 0.63: EMA+MACD alone give 0.75×0.80=0.60; on-chain confirmation (score≥0.20)
-#       or strongly bullish news (score≥0.30) tips it over. Single indicator never clears.
+# Regime-adaptive thresholds: edge distribution differs by regime.
+#   trending  → lower bar; trend-following signals have higher expected value.
+#   ranging   → higher bar (already gated by RSI extreme or on-chain override).
+#   volatile  → highest bar; choppy markets degrade all signal quality.
+#   unknown   → same as trending (conservative default).
+_REGIME_THRESHOLDS: dict[str, float] = {
+    "trending": 0.60,
+    "ranging":  0.66,   # overridden per-path by _RANGING_MR_THRESHOLD / _ONCHAIN_RANGING_THRESHOLD
+    "volatile": 0.68,
+    "unknown":  0.63,
+}
+# Legacy alias — used as fallback and for ranging MR/onchain override paths.
 _LONG_THRESHOLD = 0.63
-_SHORT_THRESHOLD = -0.63
 # Must equal _LONG_THRESHOLD — setting higher creates a dead zone where
 # direction="long/short" but confidence check immediately returns flat.
-_MIN_SIGNAL_CONFIDENCE = 0.63
+_MIN_SIGNAL_CONFIDENCE = 0.60   # lowered to match trending threshold
 
 # ADX thresholds for regime classification.
 _ADX_TRENDING = 25.0    # above → trending
@@ -790,13 +798,13 @@ def generate_signal(
 
     confidence = round(abs(combined), 4)
 
-    # Effective threshold: raised for ranging mean-reversion and on-chain override.
+    # Effective threshold: regime-adaptive base, overridden for specific paths.
     if onchain_override_active:
         long_thresh = _ONCHAIN_RANGING_THRESHOLD
     elif ranging_mean_reversion:
         long_thresh = _RANGING_MR_THRESHOLD
     else:
-        long_thresh = _LONG_THRESHOLD
+        long_thresh = _REGIME_THRESHOLDS.get(regime, _LONG_THRESHOLD)
     short_thresh = -long_thresh
 
     if combined > long_thresh:

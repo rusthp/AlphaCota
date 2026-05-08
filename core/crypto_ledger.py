@@ -548,9 +548,9 @@ def get_symbol_win_rate(
         return None
 
     total = int(row["total"]) if row and row["total"] else 0
-    # Require at least half the window (min 3) so we don't wait for 10 trades
-    # before blocking a symbol with a clear run of losses.
-    min_required = max(3, window // 2)
+    # Require at least 75% of the window before the gate can fire.
+    # With window=20: needs 15 trades — avoids banning on small samples.
+    min_required = max(5, int(window * 0.75))
     if total < min_required:
         return None
 

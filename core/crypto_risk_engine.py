@@ -6,11 +6,20 @@ Three layers of protection:
     2. validate_signal_risk — per-signal: SL existence, min reward/risk, min confidence.
     3. should_exit_position — per-tick: SL/TP touch, or signal flip vs open side.
 
+Trailing stop:
+    compute_trailing_sl(position, current_price) -> float
+        Returns the new stop-loss level after trailing. For longs the SL
+        moves up as price rises (never down); for shorts it moves down.
+        Once the trailing SL has crossed entry_price the position is in
+        profit-lock territory and should_exit_position suspends the fixed
+        TP exit so the trade can run further.
+
 All functions accept connections / dataclasses as parameters; no globals read.
 
 Public API:
     MAX_POSITION_USD, MAX_DAILY_LOSS_USD, MAX_OPEN_POSITIONS constants
     check_risk_limits(conn, mode) -> (ok, reason)
+    compute_trailing_sl(position, current_price) -> float
     should_exit_position(position, current_price, current_signal) -> (exit, reason)
     validate_signal_risk(signal, balance_usd) -> bool
 """
@@ -94,6 +103,40 @@ def check_risk_limits(
     return (True, "")
 
 
+def compute_trailing_sl(position: CryptoPosition, current_price: float) -> float:
+    """Return the updated stop-loss after applying trailing logic.
+
+    The ATR distance is approximated as ``abs(entry_price - original_stop_loss)``,
+    which is already stored in the position and never changes.
+
+    For a long:  new_sl = current_price - atr_distance  (only moves up)
+    For a short: new_sl = current_price + atr_distance  (only moves down)
+
+    The result is always better (tighter) than or equal to the existing SL —
+    the SL never widens.
+
+    Args:
+        position: The open CryptoPosition (entry_price and stop_loss are used
+                  to derive the ATR distance).
+        current_price: Latest market price.
+
+    Returns:
+        Updated stop-loss level, rounded to 8 decimals.
+    """
+    atr_distance = abs(position.entry_price - position.stop_loss)
+    if atr_distance <= 0.0:
+        return position.stop_loss
+
+    if position.side == "long":
+        candidate = current_price - atr_distance
+        new_sl = max(candidate, position.stop_loss)
+    else:
+        candidate = current_price + atr_distance
+        new_sl = min(candidate, position.stop_loss)
+
+    return round(new_sl, 8)
+
+
 def should_exit_position(
     position: CryptoPosition,
     current_price: float,
@@ -104,13 +147,22 @@ def should_exit_position(
     Exit rules (first match wins):
         1. Long position and current_price <= stop_loss  -> ("sl_hit")
         2. Long position and current_price >= take_profit -> ("tp_hit")
+           (suppressed when trailing SL has already crossed entry_price,
+            meaning profit is locked and the trade should run freely)
         3. Short position and current_price >= stop_loss  -> ("sl_hit")
         4. Short position and current_price <= take_profit -> ("tp_hit")
+           (same suppression as above for shorts)
         5. Non-flat current_signal with opposite direction and
            confidence >= 0.65                             -> ("signal_flip")
 
+    TP suppression rule: once the trailing stop has moved past entry_price
+    (i.e. stop_loss > entry_price for longs, stop_loss < entry_price for
+    shorts) the fixed TP exit is disabled.  The trailing SL then acts as
+    the sole exit, allowing the winner to run while profit is protected.
+
     Args:
-        position: Open position being evaluated.
+        position: Open position being evaluated.  stop_loss must reflect the
+                  latest trailing value (updated by compute_trailing_sl).
         current_price: Latest mid/last price.
         current_signal: Fresh signal from this tick.
 
@@ -123,12 +175,14 @@ def should_exit_position(
     if position.side == "long":
         if current_price <= position.stop_loss:
             return (True, "sl_hit")
-        if current_price >= position.take_profit:
+        profit_locked = position.stop_loss > position.entry_price
+        if not profit_locked and current_price >= position.take_profit:
             return (True, "tp_hit")
     elif position.side == "short":
         if current_price >= position.stop_loss:
             return (True, "sl_hit")
-        if current_price <= position.take_profit:
+        profit_locked = position.stop_loss < position.entry_price
+        if not profit_locked and current_price <= position.take_profit:
             return (True, "tp_hit")
 
     # Signal flip — only considered when the new signal is non-flat, confident,
