@@ -102,7 +102,8 @@ def macro_agent(state: PipelineState, api_key: str | None = None) -> None:
     ipca = macro.get("ipca_anual", 4.83)
     premio = macro.get("premio_risco", selic - ipca)
 
-    dy = state.fii_data.get("fundamentals", {}).get("dividend_yield", 0.0)
+    _dy = state.fii_data.get("fundamentals", {}).get("dividend_yield")
+    dy = float(_dy) if _dy is not None else 0.0
     dy_pct = round(dy * 100, 2) if dy < 1 else round(dy, 2)
     spread = round(dy_pct - cdi, 2)
 
@@ -167,10 +168,12 @@ def fundamental_agent(state: PipelineState, api_key: str | None = None) -> None:
     score = state.fii_data.get("score_breakdown", {})
     price = state.fii_data.get("price", 0.0)
 
-    dy = fund.get("dividend_yield", 0.0)
+    _dy = fund.get("dividend_yield")
+    dy = float(_dy) if _dy is not None else 0.0
     dy_pct = round(dy * 100, 2) if dy < 1 else round(dy, 2)
-    pvp = fund.get("pvp", 1.0)
-    vacancia = fund.get("vacancia", fund.get("vacancy_rate", 0.05))
+    pvp = float(fund.get("pvp") or 1.0)
+    _vac = fund.get("vacancia") if fund.get("vacancia") is not None else fund.get("vacancy_rate")
+    vacancia = float(_vac) if _vac is not None else 0.05
     vacancia_pct = round(vacancia * 100 if vacancia < 1 else vacancia, 1)
     alpha_score = score.get("total", score.get("alpha_score", 0))
     div_consistency = fund.get("dividend_consistency", 50.0)
@@ -252,11 +255,14 @@ def risk_agent(state: PipelineState, api_key: str | None = None) -> None:
     macro = state.macro_analysis
     fundamental = state.fundamental_analysis
 
-    debt = fund.get("debt_ratio", fund.get("endividamento", 0.3))
+    _debt = fund.get("debt_ratio") if fund.get("debt_ratio") is not None else fund.get("endividamento")
+    debt = float(_debt) if _debt is not None else 0.3
     debt_pct = round(debt * 100 if debt < 1 else debt, 1)
-    liquidity = fund.get("liquidez_diaria", fund.get("daily_liquidity", 5_000_000))
+    _liq = fund.get("liquidez_diaria") if fund.get("liquidez_diaria") is not None else fund.get("daily_liquidity")
+    liquidity = float(_liq) if _liq is not None else 5_000_000
     liquidity_k = round(liquidity / 1000, 0)
-    vacancia = fund.get("vacancia", fund.get("vacancy_rate", 0.05))
+    _vac2 = fund.get("vacancia") if fund.get("vacancia") is not None else fund.get("vacancy_rate")
+    vacancia = float(_vac2) if _vac2 is not None else 0.05
     vacancia_pct = round(vacancia * 100 if vacancia < 1 else vacancia, 1)
 
     # Volatilidade (from fii_data if available)
@@ -405,9 +411,10 @@ def decision_agent(state: PipelineState, api_key: str | None = None) -> None:
     ticker = state.ticker
     price = state.fii_data.get("price", 0.0)
     fund = state.fii_data.get("fundamentals", {})
-    dy = fund.get("dividend_yield", 0.0)
+    _dy3 = fund.get("dividend_yield")
+    dy = float(_dy3) if _dy3 is not None else 0.0
     dy_pct = round(dy * 100 if dy < 1 else dy, 2)
-    pvp = fund.get("pvp", 1.0)
+    pvp = float(fund.get("pvp") or 1.0)
     ddm_preco_justo = fund_a.get("ddm_preco_justo")
     ddm_upside = fund_a.get("ddm_upside_pct")
 
