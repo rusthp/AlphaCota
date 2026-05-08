@@ -110,6 +110,7 @@ class SectorMeta:
     count: int
     avg_score: float
     top_score: float
+    score_std: float                # std-dev of scores within sector
     avg_velocity_7d: float | None   # average pts/day across sector constituents
     rotation_signal: str            # "leading" | "lagging" | "neutral"
     rotation_bonus: float           # additive pts applied to all constituents
@@ -190,6 +191,7 @@ def compute_sector_meta(
         scores = [f["alpha_score"] for f in fiis]
         avg_sc = round(statistics.mean(scores), 2) if scores else 0.0
         top_sc = round(max(scores), 2) if scores else 0.0
+        std_sc = round(statistics.stdev(scores), 2) if len(scores) >= 2 else 0.0
 
         # Average 7d velocity across sector constituents
         avg_vel: float | None = None
@@ -220,6 +222,7 @@ def compute_sector_meta(
             count=len(fiis),
             avg_score=avg_sc,
             top_score=top_sc,
+            score_std=std_sc,
             avg_velocity_7d=avg_vel,
             rotation_signal=signal,
             rotation_bonus=bonus,
@@ -251,6 +254,44 @@ def apply_rotation_bonus(
 
     adjusted.sort(key=lambda x: x["alpha_score"], reverse=True)
     return adjusted
+
+
+def apply_zscore_normalization(
+    ranked: list[dict],
+    sector_meta: dict[str, "SectorMeta"],
+    sector_map: dict[str, str],
+) -> list[dict]:
+    """Add sector_zscore and sector_percentile to each FII dict.
+
+    sector_zscore   = (alpha_score - sector_mean) / sector_std
+    sector_percentile = fraction of sector peers with lower score (0..1)
+
+    FIIs in single-member sectors get zscore=0.0, percentile=1.0.
+    Mutates in-place and returns the same list.
+    """
+    # Pre-group scores per sector for percentile computation
+    by_sector: dict[str, list[float]] = {}
+    for fii in ranked:
+        sec = sector_map.get(fii["ticker"], "Outros")
+        by_sector.setdefault(sec, []).append(fii["alpha_score"])
+
+    for fii in ranked:
+        sec  = sector_map.get(fii["ticker"], "Outros")
+        meta = sector_meta.get(sec)
+        sc   = fii["alpha_score"]
+
+        if meta is None or meta.score_std == 0.0:
+            fii["sector_zscore"]    = 0.0
+            fii["sector_percentile"] = 1.0
+            continue
+
+        fii["sector_zscore"] = round((sc - meta.avg_score) / meta.score_std, 3)
+
+        peers = by_sector[sec]
+        below = sum(1 for p in peers if p < sc)
+        fii["sector_percentile"] = round(below / len(peers), 3)
+
+    return ranked
 
 
 def format_sector_summary(sector_meta: dict[str, SectorMeta]) -> str:

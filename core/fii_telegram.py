@@ -88,13 +88,27 @@ def _delta_str(delta: float | None) -> str:
 
 
 def _velocity_line(velocity_7d: float | None, trend: str) -> str:
-    """Format score velocity line for alert messages."""
     if velocity_7d is None:
         return ""
     arrow = "▲" if velocity_7d >= 0 else "▼"
     trend_label = {"rising": "acelerando", "falling": "desacelerando", "stable": "estável"}.get(trend, "")
     suffix = f" ({trend_label})" if trend_label else ""
     return f"  📈 Velocidade 7d: <b>{arrow}{abs(velocity_7d):.2f} pts/dia</b>{suffix}"
+
+
+def _sector_rank_line(sector_zscore: float | None, sector_percentile: float | None, setor: str) -> str:
+    if sector_zscore is None or sector_percentile is None:
+        return ""
+    pct_int = round(sector_percentile * 100)
+    zsign = "+" if sector_zscore >= 0 else ""
+    return f"  🏆 Ranking setor: <b>top {100 - pct_int}%</b> de {setor} (z={zsign}{sector_zscore:.2f})"
+
+
+def _rs_line(rs30: float | None) -> str:
+    if rs30 is None:
+        return ""
+    arrow = "▲" if rs30 >= 0 else "▼"
+    return f"  📊 RS 30d vs IFIX: <b>{arrow}{rs30*100:+.1f}%</b>"
 
 
 def notify_fii_buy(
@@ -114,13 +128,18 @@ def notify_fii_buy(
     macro_line: str = "",
     velocity_7d: float | None = None,
     trend: str = "",
+    rs30: float | None = None,
+    sector_zscore: float | None = None,
+    sector_percentile: float | None = None,
 ) -> None:
     """Alert when FII score crosses BUY threshold."""
     icon = _sector_icon(setor)
     delta = score - score_prev
     delta_str = f"+{delta:.1f}" if delta >= 0 else f"{delta:.1f}"
     momentum = f"  📊 Momentum 30d: <b>{_delta_str(score_delta_30d)} pts</b>" if score_delta_30d is not None else ""
-    vel_line = _velocity_line(velocity_7d, trend)
+    vel_line  = _velocity_line(velocity_7d, trend)
+    rank_line = _sector_rank_line(sector_zscore, sector_percentile, setor)
+    rs_ln     = _rs_line(rs30)
 
     text = (
         f"🟢 <b>OPORTUNIDADE FII</b>\n"
@@ -128,7 +147,9 @@ def notify_fii_buy(
         f"📊 Ticker: <b>{ticker}</b> — {nome}\n"
         f"{icon} Setor: <b>{setor}</b>\n"
         f"⭐ Score: <b>{score:.1f}/100</b> ({delta_str} pts){momentum}\n"
+        + (f"{rank_line}\n" if rank_line else "")
         + (f"{vel_line}\n" if vel_line else "")
+        + (f"{rs_ln}\n" if rs_ln else "")
         + f"💰 DY (12m): <b>{dy*100:.1f}%</b>\n"
         f"📐 P/VP: <b>{pvp:.2f}</b>\n"
         f"💵 Preço: <b>R$ {price:.2f}</b>\n"
@@ -154,12 +175,17 @@ def notify_fii_sell(
     macro_line: str = "",
     velocity_7d: float | None = None,
     trend: str = "",
+    rs30: float | None = None,
+    sector_zscore: float | None = None,
+    sector_percentile: float | None = None,
 ) -> None:
     """Alert when FII score drops below EXIT threshold or deteriorates sharply."""
     icon = _sector_icon(setor)
     delta = score - score_prev
-    momentum = f"  📊 Momentum 30d: <b>{_delta_str(score_delta_30d)} pts</b>" if score_delta_30d is not None else ""
-    vel_line = _velocity_line(velocity_7d, trend)
+    momentum  = f"  📊 Momentum 30d: <b>{_delta_str(score_delta_30d)} pts</b>" if score_delta_30d is not None else ""
+    vel_line  = _velocity_line(velocity_7d, trend)
+    rank_line = _sector_rank_line(sector_zscore, sector_percentile, setor)
+    rs_ln     = _rs_line(rs30)
 
     text = (
         f"🔴 <b>DETERIORAÇÃO FII</b>\n"
@@ -167,7 +193,9 @@ def notify_fii_sell(
         f"📊 Ticker: <b>{ticker}</b> — {nome}\n"
         f"{icon} Setor: <b>{setor}</b>\n"
         f"⭐ Score: <b>{score:.1f}/100</b> ({delta:.1f} pts){momentum}\n"
+        + (f"{rank_line}\n" if rank_line else "")
         + (f"{vel_line}\n" if vel_line else "")
+        + (f"{rs_ln}\n" if rs_ln else "")
         + f"💰 DY (12m): <b>{dy*100:.1f}%</b>\n"
         f"📐 P/VP: <b>{pvp:.2f}</b>\n"
         f"💵 Preço: <b>R$ {price:.2f}</b>\n"
@@ -231,6 +259,54 @@ def notify_fii_ranking(
         lines.append("")
         lines.append(macro_line)
     lines.append(f"📅 {time.strftime('%d/%m/%Y %H:%M')}")
+    send_message("\n".join(lines))
+
+
+def notify_sector_cluster(
+    signal_type: str,
+    setor: str,
+    fiis: list[dict],
+    macro_line: str = "",
+) -> None:
+    """Send a consolidated cluster alert when ≥3 FIIs in the same sector signal.
+
+    Args:
+        signal_type: "buy" | "sell" | "drop"
+        setor:       Sector name (e.g. "Papel (CRI)")
+        fiis:        List of FII dicts that triggered (ticker, alpha_score, dy, pvp, sector_zscore)
+        macro_line:  Optional macro context line
+    """
+    if signal_type == "buy":
+        header = "🟢 <b>CLUSTER BUY — SETOR EM FORÇA</b>"
+        tag    = "✅"
+    elif signal_type in ("sell", "drop"):
+        header = "🔴 <b>CLUSTER SELL — SETOR EM DETERIORAÇÃO</b>"
+        tag    = "⚠️"
+    else:
+        return
+
+    icon = _sector_icon(setor)
+    lines = [
+        header,
+        "━━━━━━━━━━━━━━━━━━━",
+        f"{icon} Setor: <b>{setor}</b>  ({len(fiis)} FIIs)",
+        "",
+    ]
+    for f in fiis:
+        t   = f.get("ticker", "?")
+        sc  = f.get("alpha_score", 0.0)
+        dy  = f.get("dividend_yield", 0.0)
+        pvp = f.get("pvp", 1.0)
+        sz  = f.get("sector_zscore")
+        sz_str = f"  z={sz:+.2f}" if sz is not None else ""
+        lines.append(
+            f"  {tag} <b>{t}</b>  score={sc:.0f}{sz_str}  DY={dy*100:.1f}%  P/VP={pvp:.2f}"
+        )
+
+    if macro_line:
+        lines.append("")
+        lines.append(macro_line)
+    lines.append(f"⏰ {time.strftime('%d/%m/%Y %H:%M')}")
     send_message("\n".join(lines))
 
 

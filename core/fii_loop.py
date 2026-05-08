@@ -42,18 +42,19 @@ from data.fundamentals_scraper import fetch_fundamentals_bulk
 from data.data_bridge import load_last_price, load_monthly_dividend
 from data.universe import get_universe, get_sector_map
 from core.score_engine import calculate_alpha_score
-from core.fii_sector_meta import get_weights_for_sector, compute_sector_meta, apply_rotation_bonus
+from core.fii_sector_meta import get_weights_for_sector, compute_sector_meta, apply_rotation_bonus, apply_zscore_normalization
 from core.fii_telegram import (
     notify_fii_buy,
     notify_fii_sell,
     notify_fii_ranking,
     notify_fii_loop_error,
     notify_coverage_health,
+    notify_sector_cluster,
     send_message,
 )
 from core.fii_ledger import connect_fii_db, save_fii_snapshot, get_fii_score_deltas_bulk
 from core.fii_macro_engine import fetch_macro_context, macro_summary_line
-from core.fii_score_analytics import get_universe_analytics
+from core.fii_score_analytics import get_universe_analytics, get_relative_strength_bulk
 from core.logger import logger
 
 # ---------------------------------------------------------------------------
@@ -76,6 +77,9 @@ _PERSIST_CYCLES = 2
 
 # Cooldown: same alert type on same ticker won't re-fire within this window.
 _ALERT_COOLDOWN_HOURS = 72.0
+
+# Sector cluster: fire consolidated alert when ≥N FIIs of the same type signal in one sector.
+_CLUSTER_THRESHOLD = 3
 
 # Data quality: alerts suppressed when confidence is below this threshold.
 _MIN_DATA_CONFIDENCE = 0.60
@@ -325,16 +329,17 @@ def _run_iteration(state: dict, iteration: int) -> dict:
     snap_conn.close()
     logger.info("fii_loop: snapshots saved for %d FIIs (%s)", len(ranked), today_str)
 
-    # --- Score deltas (30d momentum) + velocity/acceleration analytics ---
-    analytics_conn = connect_fii_db()
+    # --- Score deltas + velocity analytics + relative strength ---
+    analytics_conn  = connect_fii_db()
     score_deltas    = get_fii_score_deltas_bulk(analytics_conn, tickers, days=30)
     score_analytics = get_universe_analytics(analytics_conn, tickers, days=60)
+    rs_map          = get_relative_strength_bulk(analytics_conn, tickers, days=30)
     analytics_conn.close()
 
-    # --- Sector meta-score + rotation bonus ---
-    # Aggregate sector velocity, detect leading/lagging sectors, apply ±4 pt bonus.
+    # --- Sector meta-score + rotation bonus + cross-sector z-score ---
     sector_meta = compute_sector_meta(ranked, sector_map, score_analytics)
     ranked = apply_rotation_bonus(ranked, sector_meta, sector_map)
+    ranked = apply_zscore_normalization(ranked, sector_meta, sector_map)
     logger.info(
         "fii_loop: sector rotation — leading=%s lagging=%s",
         [s for s, m in sector_meta.items() if m.rotation_signal == "leading"],
@@ -349,6 +354,10 @@ def _run_iteration(state: dict, iteration: int) -> dict:
     consec_below   = state.setdefault("consecutive_below", {})
     consec_above   = state.setdefault("consecutive_above", {})
     last_alert_map = state.setdefault("last_alert", {})
+
+    # Accumulate signals per sector this cycle for cluster detection.
+    # Structure: setor → list of (signal_type, fii_payload_dict)
+    sector_signals: dict[str, list[tuple[str, dict]]] = {}
 
     for fii in ranked:
         ticker  = fii["ticker"]
@@ -368,6 +377,9 @@ def _run_iteration(state: dict, iteration: int) -> dict:
         _an     = score_analytics.get(ticker.upper(), {})
         vel7    = _an.get("velocity_7d")
         trend   = _an.get("trend", "")
+        rs30    = rs_map.get(ticker.upper())
+        sz      = fii.get("sector_zscore", 0.0)
+        spct    = fii.get("sector_percentile", 1.0)
 
         new_scores[ticker] = score
 
@@ -411,10 +423,16 @@ def _run_iteration(state: dict, iteration: int) -> dict:
                 income_score=i_score, valuation_score=v_score, risk_score=r_score,
                 trigger=trigger, score_delta_30d=d30, macro_line=m_line,
                 velocity_7d=vel7, trend=trend,
+                rs30=rs30, sector_zscore=sz, sector_percentile=spct,
             )
             alert_states[ticker]   = "buy_active"
             last_alert_map[ticker] = {"type": "buy", "ts": time.time()}
             alerted.append(ticker)
+            sector_signals.setdefault(setor, []).append((
+                "buy",
+                {"ticker": ticker, "alpha_score": score, "dividend_yield": dy,
+                 "pvp": pvp, "sector_zscore": sz},
+            ))
         elif cur_state == "buy_active" and score < _BUY_HYSTER:
             alert_states[ticker] = "neutral"
             consec_above[ticker] = 0
@@ -436,10 +454,16 @@ def _run_iteration(state: dict, iteration: int) -> dict:
                 dy=dy, pvp=pvp, price=price,
                 trigger=trigger, score_delta_30d=d30, macro_line=m_line,
                 velocity_7d=vel7, trend=trend,
+                rs30=rs30, sector_zscore=sz, sector_percentile=spct,
             )
             alert_states[ticker]   = "sell_active"
             last_alert_map[ticker] = {"type": "sell", "ts": time.time()}
             alerted.append(ticker)
+            sector_signals.setdefault(setor, []).append((
+                "sell",
+                {"ticker": ticker, "alpha_score": score, "dividend_yield": dy,
+                 "pvp": pvp, "sector_zscore": sz},
+            ))
         elif cur_state == "sell_active" and score >= _SELL_HYSTER:
             alert_states[ticker] = "neutral"
             consec_below[ticker] = 0
@@ -457,14 +481,33 @@ def _run_iteration(state: dict, iteration: int) -> dict:
                 dy=dy, pvp=pvp, price=price,
                 trigger=trigger, score_delta_30d=d30, macro_line=m_line,
                 velocity_7d=vel7, trend=trend,
+                rs30=rs30, sector_zscore=sz, sector_percentile=spct,
             )
             last_alert_map[ticker] = {"type": "drop", "ts": time.time()}
             alerted.append(ticker)
+            sector_signals.setdefault(setor, []).append((
+                "drop",
+                {"ticker": ticker, "alpha_score": score, "dividend_yield": dy,
+                 "pvp": pvp, "sector_zscore": sz},
+            ))
 
     state["alert_states"]      = alert_states
     state["consecutive_below"] = consec_below
     state["consecutive_above"] = consec_above
     state["last_alert"]        = last_alert_map
+
+    # --- Sector cluster alerts (≥_CLUSTER_THRESHOLD same-type signals in one sector) ---
+    for setor, signals in sector_signals.items():
+        by_type: dict[str, list[dict]] = {}
+        for sig_type, payload in signals:
+            by_type.setdefault(sig_type, []).append(payload)
+        for sig_type, payloads in by_type.items():
+            if len(payloads) >= _CLUSTER_THRESHOLD:
+                logger.info(
+                    "fii_loop: cluster %s in %s — %d FIIs",
+                    sig_type, setor, len(payloads),
+                )
+                notify_sector_cluster(sig_type, setor, payloads, macro_line=m_line)
 
     # --- Daily ranking (once per day at first iteration) ---
     today = time.strftime("%Y-%m-%d")
