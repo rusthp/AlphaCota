@@ -41,7 +41,8 @@ import datetime
 from data.fundamentals_scraper import fetch_fundamentals_bulk
 from data.data_bridge import load_last_price, load_monthly_dividend
 from data.universe import get_universe, get_sector_map
-from core.score_engine import rank_fiis
+from core.score_engine import calculate_alpha_score
+from core.fii_sector_meta import get_weights_for_sector, compute_sector_meta, apply_rotation_bonus
 from core.fii_telegram import (
     notify_fii_buy,
     notify_fii_sell,
@@ -255,16 +256,36 @@ def _run_iteration(state: dict, iteration: int) -> dict:
             "_monthly_div": monthly_div,
         })
 
-    # --- Score ---
-    ranked = rank_fiis(fiis_for_ranking)
-    logger.info("fii_loop: scored %d FIIs", len(ranked))
-
     # --- Macro context (BCB SELIC + IPCA) — cached 6h, never raises ---
+    # Fetched before scoring so sector weights can adapt to the current regime.
     macro = fetch_macro_context()
     m_line = macro_summary_line(macro)
     logger.info("fii_loop: %s", m_line)
 
-    # --- Apply macro score modifiers ---
+    # --- Score with sector-adaptive weights ---
+    # Each FII uses weights tuned for its sector's structural profile and the
+    # current macro regime (e.g. Papel (CRI) gets heavier w_income when SELIC
+    # is rising). Falls back to DEFAULT_WEIGHTS for unrecognised sectors.
+    ranked_raw: list[dict] = []
+    for fii_data in fiis_for_ranking:
+        sec = sector_map.get(fii_data["ticker"], "Outros")
+        w = get_weights_for_sector(sec, macro)
+        score_data = calculate_alpha_score(
+            dividend_yield=fii_data["dividend_yield"],
+            dividend_consistency=fii_data["dividend_consistency"],
+            pvp=fii_data["pvp"],
+            debt_ratio=fii_data["debt_ratio"],
+            vacancy_rate=fii_data["vacancy_rate"],
+            revenue_growth_12m=fii_data["revenue_growth_12m"],
+            earnings_growth_12m=fii_data["earnings_growth_12m"],
+            news_sentiment=fii_data["news_sentiment"],
+            weights=w,
+        )
+        ranked_raw.append({**fii_data, **score_data, "_sector_weights": sec})
+    ranked = sorted(ranked_raw, key=lambda x: x["alpha_score"], reverse=True)
+    logger.info("fii_loop: scored %d FIIs (sector-adaptive weights)", len(ranked))
+
+    # --- Apply macro flat-bonus score modifiers ---
     for fii in ranked:
         sec = sector_map.get(fii["ticker"], "Outros")
         bonus = macro.score_modifiers.get(sec, 0.0) + macro.score_modifiers.get("global", 0.0)
@@ -309,6 +330,16 @@ def _run_iteration(state: dict, iteration: int) -> dict:
     score_deltas    = get_fii_score_deltas_bulk(analytics_conn, tickers, days=30)
     score_analytics = get_universe_analytics(analytics_conn, tickers, days=60)
     analytics_conn.close()
+
+    # --- Sector meta-score + rotation bonus ---
+    # Aggregate sector velocity, detect leading/lagging sectors, apply ±4 pt bonus.
+    sector_meta = compute_sector_meta(ranked, sector_map, score_analytics)
+    ranked = apply_rotation_bonus(ranked, sector_meta, sector_map)
+    logger.info(
+        "fii_loop: sector rotation — leading=%s lagging=%s",
+        [s for s, m in sector_meta.items() if m.rotation_signal == "leading"],
+        [s for s, m in sector_meta.items() if m.rotation_signal == "lagging"],
+    )
 
     prev_scores: dict[str, float] = state.get("scores", {})
     new_scores: dict[str, float] = {}
