@@ -108,6 +108,23 @@ def macro_agent(state: PipelineState, api_key: str | None = None) -> None:
     dy_pct = round(dy * 100, 2) if dy < 1 else round(dy, 2)
     spread = round(dy_pct - cdi, 2)
 
+    segment = state.fii_data.get("segment", "")
+    is_papel = not (segment in _TIJOLO_SECTORS)
+    tipo_fii = "papel (CRI/recebíveis, renda flutuante)" if is_papel else f"tijolo — {segment} (renda real, contratos reajustados)"
+
+    # Sector-specific macro impact text for the prompt
+    if is_papel:
+        impacto_ciclo = (
+            "FIIs de papel: renda ligada ao CDI/IPCA — alta de juros costuma aumentar o DY corrente, "
+            "mas comprime múltiplos de mercado. Queda de juros reduz renda corrente mas pode expandir preços."
+        )
+    else:
+        impacto_ciclo = (
+            f"FIIs de tijolo ({segment}): renda indexada a IPCA/IGP-M via contratos de aluguel. "
+            "Queda de juros comprime cap rate e expande valuation (múltiplo sobe). "
+            "Alta de juros aumenta custo de oportunidade e comprime preço, mas renda é protegida por reajuste contratual."
+        )
+
     prompt = f"""Você é um economista especialista em mercado imobiliário brasileiro.
 
 Contexto macro atual:
@@ -116,9 +133,12 @@ Contexto macro atual:
 - IPCA (12m): {ipca}% a.a.
 - Prêmio real (SELIC - IPCA): {premio:.2f}%
 
-FII analisado: {state.ticker}
+FII analisado: {state.ticker} — tipo: {tipo_fii}
 - Dividend Yield atual: {dy_pct}% a.a.
 - Spread sobre CDI: {spread:+.2f}%
+
+Dinâmica macro ESPECÍFICA para este tipo de FII:
+{impacto_ciclo}
 
 Responda SOMENTE em JSON com estas chaves:
 {{
@@ -126,9 +146,9 @@ Responda SOMENTE em JSON com estas chaves:
   "impacto_fii": "positivo|neutro|negativo",
   "spread_atrativo": true/false,
   "dy_real": {round(dy_pct - ipca, 2)},
-  "yield_minimo_aceitavel": <float % que um FII deve pagar hoje para valer vs CDI>,
-  "contexto": "<2 frases explicando o momento macro e o que significa para FIIs de papel vs tijolo>",
-  "alerta": "<1 frase se há algum risco macro relevante, ou null>"
+  "yield_minimo_aceitavel": <float % — retorno mínimo exigido para ESTE tipo de FII no cenário atual>,
+  "contexto": "<2 frases específicas ao setor {segment} — não mencionar tipo diferente de FII>",
+  "alerta": "<1 frase de risco macro relevante para {segment}, ou null>"
 }}"""
 
     try:
@@ -154,7 +174,7 @@ Responda SOMENTE em JSON com estas chaves:
             "spread_atrativo": spread > 1.5,
             "dy_real": round(dy_pct - ipca, 2),
             "spread_cdi": spread,
-            "contexto": f"SELIC {selic}%, IPCA {ipca}%, spread do FII vs CDI: {spread:+.2f}%.",
+            "contexto": f"SELIC {selic}%, IPCA {ipca}%, {segment}: {impacto_ciclo[:100]}",
             "alerta": None,
         }
 
@@ -226,6 +246,32 @@ _SECTOR_SPREAD: dict[str, float] = {
     "Hotel":          3.0,
 }
 
+# Sectors where assets are long-duration (rent contracts, physical RE).
+# Gordon model for these should use a through-the-cycle CDI, NOT the current
+# cyclical peak — otherwise peak-CDI systematically undervalues all tijolo FIIs.
+_TIJOLO_SECTORS: frozenset[str] = frozenset({
+    "Shopping", "Logística", "Lajes Corp.", "Saúde",
+    "Residencial", "Educacional", "Hotel", "Híbrido", "Fundo de Fundos",
+})
+
+# Long-run neutral Selic proxy (Copom structural estimate ~10-11%).
+# Used as the ceiling for tijolo discount rates: prevents peak-CDI distortion
+# without ignoring the rate cycle entirely.
+_CDI_TIJOLO_CAP: float = 11.5
+
+
+def _effective_cdi(segment: str, cdi: float) -> float:
+    """Return the CDI to use as discount-rate basis for Gordon model.
+
+    Papel/CRI/Agro: current CDI (floating-rate income, short-duration asset).
+    Tijolo sectors: min(current CDI, neutral CDI cap) — long-duration assets
+    should not be discounted at a cyclical peak that the market doesn't price in.
+    """
+    if segment in _TIJOLO_SECTORS:
+        return min(cdi, _CDI_TIJOLO_CAP)
+    return cdi
+
+
 def _compute_trade_plan(
     fair_value: float | None,
     price: float,
@@ -255,14 +301,15 @@ def _compute_trade_plan(
 def _required_yield(segment: str, macro: dict[str, Any]) -> float:
     """Required DY (%) = r - g from Gordon model, consistent with valuation.
 
-    Equivalent to the discount rate applied in _compute_trade_plan.
-    Low-growth sectors (Papel) carry higher required yield; high-growth
-    sectors (Shopping) accept lower current yield because g compensates.
+    Uses _effective_cdi so tijolo hurdle rates reflect normalized rates, not
+    the cyclical CDI peak. Prevents shopping/lajes from permanently appearing
+    unattractive when CDI is elevated.
     """
     cdi = macro.get("cdi_anual", 10.65)
+    eff_cdi = _effective_cdi(segment, cdi)
     g = _SECTOR_GROWTH.get(segment, 0.02)
     spread = _SECTOR_SPREAD.get(segment, 2.0)
-    return round(cdi + spread - g * 100, 2)
+    return round(eff_cdi + spread - g * 100, 2)
 
 
 def fundamental_agent(state: PipelineState, api_key: str | None = None) -> None:
@@ -282,15 +329,16 @@ def fundamental_agent(state: PipelineState, api_key: str | None = None) -> None:
     macro = state.macro_analysis
 
     # Gordon Growth Model: P = D_annual / (r - g)
-    # r = CDI + sector_spread (sector operational risk premium)
+    # r = effective_cdi + sector_spread
+    # Tijolo sectors: effective_cdi = min(current CDI, CDI_TIJOLO_CAP=11.5%)
+    # Papel/CRI/Agro: effective_cdi = current CDI (floating-rate, appropriate)
     # g = sector nominal dividend growth (IPCA/IGP-M adjustments; 0 for papel)
-    # Dividend: cross-check yfinance vs yield-implied — use the higher to avoid
-    # stale-cache drag from yfinance partial history.
     segment = state.fii_data.get("segment", "")
     cdi = state.macro.get("cdi_anual", 10.65)
+    eff_cdi = _effective_cdi(segment, cdi)
     g = _SECTOR_GROWTH.get(segment, 0.02)
     spread_pct = _SECTOR_SPREAD.get(segment, 2.0)
-    r = (cdi + spread_pct) / 100
+    r = (eff_cdi + spread_pct) / 100
 
     div_mensal = _normalize_dividend(state.fii_data, segment, dy, price)
 
@@ -312,8 +360,8 @@ FII: {state.ticker} | Setor: {segment}
 - Consistência dividendos (0-100): {div_consistency}
 - Vacância: {vacancia_pct}%
 - Preço atual: R$ {price:.2f}
-- Preço justo Gordon (CDI {cdi:.1f}%+{spread_pct:.1f}pp spread, g={g*100:.0f}%/a crescimento setor): R$ {ddm_preco_justo if ddm_preco_justo else 'N/D'} (upside: {f'{ddm_upside:+.1f}%' if ddm_upside is not None else 'N/D'})
-- Nota: FIIs de tijolo ({segment}) têm crescimento real de dividendos (reajuste de aluguéis), já incorporado no modelo Gordon acima.
+- Preço justo Gordon (CDI normalizado {eff_cdi:.1f}%+{spread_pct:.1f}pp spread, g={g*100:.0f}%/a crescimento setor): R$ {ddm_preco_justo if ddm_preco_justo else 'N/D'} (upside: {f'{ddm_upside:+.1f}%' if ddm_upside is not None else 'N/D'})
+- Nota: CDI normalizado usado para tijolo (long-duration) = min(CDI atual {cdi:.1f}%, neutro 11.5%). FIIs de tijolo têm crescimento real de dividendos via reajuste de aluguéis.
 
 Score detalhado: {json.dumps(score, ensure_ascii=False)}
 
