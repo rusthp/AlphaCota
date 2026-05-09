@@ -160,8 +160,39 @@ Responda SOMENTE em JSON com estas chaves:
 
 # ---------------------------------------------------------------------------
 # Agent 2 — FundamentalAgent
-# Analisa fundamentos + calcula DDM (Dividend Discount Model)
+# Analisa fundamentos + calcula DDM (Gordon Growth Model por setor)
 # ---------------------------------------------------------------------------
+
+# Annual dividend growth rate (nominal) for Gordon Growth Model.
+# Papel/Agro: g=0 — receivables are floating-rate; income doesn't compound.
+# Tijolo sectors: g = IPCA/IGP-M contract adjustment + portfolio expansion.
+_SECTOR_GROWTH: dict[str, float] = {
+    "Shopping":       0.040,
+    "Logística":      0.030,
+    "Saúde":          0.040,
+    "Residencial":    0.030,
+    "Lajes Corp.":    0.020,
+    "Hotel":          0.030,
+    "Híbrido":        0.025,
+    "Fundo de Fundos": 0.020,
+    "Educacional":    0.025,
+    "Papel (CRI)":    0.000,
+    "Agro":           0.000,
+}
+
+# Spread over CDI (pp) by sector — reflects operational/credit/vacancy risk premium.
+_SECTOR_SPREAD: dict[str, float] = {
+    "Papel (CRI)":    1.5,
+    "Agro":           1.5,
+    "Logística":      2.0,
+    "Fundo de Fundos": 2.0,
+    "Saúde":          2.0,
+    "Shopping":       2.5,
+    "Lajes Corp.":    2.5,
+    "Residencial":    2.5,
+    "Educacional":    2.5,
+    "Hotel":          3.0,
+}
 
 def fundamental_agent(state: PipelineState, api_key: str | None = None) -> None:
     fund = state.fii_data.get("fundamentals", {})
@@ -179,13 +210,29 @@ def fundamental_agent(state: PipelineState, api_key: str | None = None) -> None:
     div_consistency = fund.get("dividend_consistency", 50.0)
     macro = state.macro_analysis
 
-    # DDM: preço justo = dividendo_mensal / (taxa_desconto_mensal)
-    # taxa_desconto = CDI + spread_risco_imobiliario (2%)
+    # Gordon Growth Model: P = D_annual / (r - g)
+    # r = CDI + sector_spread (sector operational risk premium)
+    # g = sector nominal dividend growth (IPCA/IGP-M adjustments; 0 for papel)
+    # Dividend: cross-check yfinance vs yield-implied — use the higher to avoid
+    # stale-cache drag from yfinance partial history.
+    segment = state.fii_data.get("segment", "")
     cdi = state.macro.get("cdi_anual", 10.65)
-    taxa_desconto_anual = (cdi + 2.0) / 100
-    taxa_desconto_mensal = (1 + taxa_desconto_anual) ** (1 / 12) - 1
-    div_mensal = state.fii_data.get("dividend_monthly", 0.0)
-    ddm_preco_justo = round(div_mensal / taxa_desconto_mensal, 2) if taxa_desconto_mensal > 0 and div_mensal > 0 else None
+    g = _SECTOR_GROWTH.get(segment, 0.02)
+    spread_pct = _SECTOR_SPREAD.get(segment, 2.0)
+    r = (cdi + spread_pct) / 100
+
+    div_yf = float(state.fii_data.get("dividend_monthly") or 0.0)
+    div_from_yield = dy * price / 12  # dy is decimal fraction (e.g. 0.089)
+    # Prefer yield-based when yfinance returns zero or is >20% below yield-implied
+    if div_from_yield > 0 and (div_yf == 0 or div_yf < div_from_yield * 0.80):
+        div_mensal = round(div_from_yield, 4)
+    else:
+        div_mensal = div_yf
+
+    if r > g and div_mensal > 0:
+        ddm_preco_justo = round(div_mensal * 12 / (r - g), 2)
+    else:
+        ddm_preco_justo = None
     ddm_upside = round((ddm_preco_justo / price - 1) * 100, 1) if ddm_preco_justo and price > 0 else None
 
     prompt = f"""Você é um analista de FIIs especializado em análise fundamentalista.
@@ -193,14 +240,15 @@ def fundamental_agent(state: PipelineState, api_key: str | None = None) -> None:
 Contexto macro: {macro.get('contexto', '')}
 Ciclo de juros: {macro.get('ciclo_juros', 'estavel')}
 
-FII: {state.ticker}
+FII: {state.ticker} | Setor: {segment}
 - AlphaScore: {alpha_score}/100
 - P/VP: {pvp} (< 1.0 = desconto, > 1.2 = prêmio)
-- Dividend Yield: {dy_pct}% a.a.
+- Dividend Yield: {dy_pct}% a.a. | Dividendo mensal estimado: R$ {div_mensal:.4f}
 - Consistência dividendos (0-100): {div_consistency}
 - Vacância: {vacancia_pct}%
 - Preço atual: R$ {price:.2f}
-- Preço justo DDM: R$ {ddm_preco_justo if ddm_preco_justo else 'N/D'} (upside: {f'{ddm_upside:+.1f}%' if ddm_upside is not None else 'N/D'})
+- Preço justo Gordon (CDI {cdi:.1f}%+{spread_pct:.1f}pp spread, g={g*100:.0f}%/a crescimento setor): R$ {ddm_preco_justo if ddm_preco_justo else 'N/D'} (upside: {f'{ddm_upside:+.1f}%' if ddm_upside is not None else 'N/D'})
+- Nota: FIIs de tijolo ({segment}) têm crescimento real de dividendos (reajuste de aluguéis), já incorporado no modelo Gordon acima.
 
 Score detalhado: {json.dumps(score, ensure_ascii=False)}
 
