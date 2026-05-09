@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import statistics
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -163,6 +164,37 @@ Responda SOMENTE em JSON com estas chaves:
 # Analisa fundamentos + calcula DDM (Gordon Growth Model por setor)
 # ---------------------------------------------------------------------------
 
+def _normalize_dividend(
+    fii_data: dict[str, Any],
+    segment: str,
+    dy: float,
+    price: float,
+) -> float:
+    """Return normalized monthly dividend using median of last N non-zero payments.
+
+    Papel/CRI/Agro: median of last 6 non-zero months (floating-rate, shorter window).
+    Tijolo: median of last 12 non-zero months (filters amortizations, extraordinary payouts).
+    Falls back to yield-implied when history is sparse or median is >20% below yield-implied.
+    """
+    history = fii_data.get("dividend_history") or []
+    vals = [
+        float(p["value"])
+        for p in history
+        if p.get("value") and float(p["value"]) > 0.001
+    ]
+
+    is_papel = any(k in segment.lower() for k in ["papel", "cri", "agro"])
+    n = 6 if is_papel else 12
+    recent = vals[-n:] if len(vals) >= n else vals
+
+    median_div = statistics.median(recent) if recent else 0.0
+    yield_implied = dy * price / 12  # dy is decimal fraction (e.g. 0.089)
+
+    if yield_implied > 0 and (median_div == 0.0 or median_div < yield_implied * 0.80):
+        return round(yield_implied, 4)
+    return round(median_div, 4)
+
+
 # Annual dividend growth rate (nominal) for Gordon Growth Model.
 # Papel/Agro: g=0 — receivables are floating-rate; income doesn't compound.
 # Tijolo sectors: g = IPCA/IGP-M contract adjustment + portfolio expansion.
@@ -194,6 +226,45 @@ _SECTOR_SPREAD: dict[str, float] = {
     "Hotel":          3.0,
 }
 
+def _compute_trade_plan(
+    fair_value: float | None,
+    price: float,
+) -> tuple[float | None, float | None, float | None]:
+    """Return (entry, target, stop) with invariant stop < entry < target enforced.
+
+    entry  = fair_value * 0.92  (8% margin of safety below fair value)
+    target = fair_value * 1.08  (8% above fair value ≈ 17% above entry)
+    stop   = entry * 0.88       (12% trailing stop from entry)
+    """
+    if fair_value and fair_value > 0:
+        entry  = round(fair_value * 0.92, 2)
+        target = round(fair_value * 1.08, 2)
+    elif price > 0:
+        entry  = round(price * 0.97, 2)
+        target = round(price * 1.10, 2)
+    else:
+        return None, None, None
+
+    stop = round(entry * 0.88, 2)
+
+    if not (stop < entry < target):
+        return None, None, None
+    return entry, target, stop
+
+
+def _required_yield(segment: str, macro: dict[str, Any]) -> float:
+    """Required DY (%) = r - g from Gordon model, consistent with valuation.
+
+    Equivalent to the discount rate applied in _compute_trade_plan.
+    Low-growth sectors (Papel) carry higher required yield; high-growth
+    sectors (Shopping) accept lower current yield because g compensates.
+    """
+    cdi = macro.get("cdi_anual", 10.65)
+    g = _SECTOR_GROWTH.get(segment, 0.02)
+    spread = _SECTOR_SPREAD.get(segment, 2.0)
+    return round(cdi + spread - g * 100, 2)
+
+
 def fundamental_agent(state: PipelineState, api_key: str | None = None) -> None:
     fund = state.fii_data.get("fundamentals", {})
     score = state.fii_data.get("score_breakdown", {})
@@ -221,13 +292,7 @@ def fundamental_agent(state: PipelineState, api_key: str | None = None) -> None:
     spread_pct = _SECTOR_SPREAD.get(segment, 2.0)
     r = (cdi + spread_pct) / 100
 
-    div_yf = float(state.fii_data.get("dividend_monthly") or 0.0)
-    div_from_yield = dy * price / 12  # dy is decimal fraction (e.g. 0.089)
-    # Prefer yield-based when yfinance returns zero or is >20% below yield-implied
-    if div_from_yield > 0 and (div_yf == 0 or div_yf < div_from_yield * 0.80):
-        div_mensal = round(div_from_yield, 4)
-    else:
-        div_mensal = div_yf
+    div_mensal = _normalize_dividend(state.fii_data, segment, dy, price)
 
     if r > g and div_mensal > 0:
         ddm_preco_justo = round(div_mensal * 12 / (r - g), 2)
@@ -458,6 +523,7 @@ def decision_agent(state: PipelineState, api_key: str | None = None) -> None:
 
     ticker = state.ticker
     price = state.fii_data.get("price", 0.0)
+    segment = state.fii_data.get("segment", "")
     fund = state.fii_data.get("fundamentals", {})
     _dy3 = fund.get("dividend_yield")
     dy = float(_dy3) if _dy3 is not None else 0.0
@@ -465,6 +531,10 @@ def decision_agent(state: PipelineState, api_key: str | None = None) -> None:
     pvp = float(fund.get("pvp") or 1.0)
     ddm_preco_justo = fund_a.get("ddm_preco_justo")
     ddm_upside = fund_a.get("ddm_upside_pct")
+
+    # Deterministic trade plan — LLM does NOT compute prices
+    entry, target, stop = _compute_trade_plan(ddm_preco_justo, price)
+    dy_alvo_minimo = _required_yield(segment, state.macro)
 
     # Notícias recentes (primeiras 3 manchetes)
     news_headlines = "\n".join(
@@ -475,7 +545,8 @@ def decision_agent(state: PipelineState, api_key: str | None = None) -> None:
     crescimento_op = persona.get("crescimento", {}).get("opiniao", "aguardar")
 
     prompt = f"""Você é o Decision Agent de um sistema de análise de FIIs.
-Sintetize os outputs de todos os agentes anteriores em uma recomendação final.
+Os preços de entrada/alvo/stop já foram calculados deterministicamente pelo sistema quantitativo.
+Sua tarefa é sintetizar os agentes anteriores em recomendação + narrativa. Não invente preços.
 
 === RESUMO DOS AGENTES ===
 MACRO: {macro.get('contexto', '')} | Spread CDI: {macro.get('spread_cdi', 0):+.2f}%
@@ -484,10 +555,13 @@ RISCO: {risk_a.get('resumo_risco', '')} | Nível: {risk_a.get('nivel_risco', 'me
 PERSONAS: Barsi={barsi_op} | Crescimento={crescimento_op}
 
 === DADOS DO FII {ticker} ===
-- Preço: R$ {price:.2f}
-- P/VP: {pvp}
-- DY: {dy_pct}% a.a.
-- DDM Preço Justo: R$ {ddm_preco_justo if ddm_preco_justo else 'N/D'} (upside: {f'{ddm_upside:+.1f}%' if ddm_upside is not None else 'N/D'})
+- Preço atual: R$ {price:.2f} | Setor: {segment}
+- P/VP: {pvp} | DY: {dy_pct}% a.a.
+- Preço justo Gordon: R$ {ddm_preco_justo if ddm_preco_justo else 'N/D'} (upside: {f'{ddm_upside:+.1f}%' if ddm_upside is not None else 'N/D'})
+- Entrada ideal (quant): R$ {entry if entry else 'N/D'}
+- Alvo 12m (quant): R$ {target if target else 'N/D'}
+- Stop (quant): R$ {stop if stop else 'N/D'}
+- DY mínimo requerido: {dy_alvo_minimo}%
 
 === NOTÍCIAS RECENTES ===
 {news_headlines}
@@ -496,10 +570,6 @@ Responda SOMENTE em JSON:
 {{
   "recomendacao": "COMPRAR|AGUARDAR|EVITAR",
   "forca_sinal": "forte|moderado|fraco",
-  "preco_entrada_ideal": <float ou null — preço máximo recomendado para entrada>,
-  "preco_alvo_12m": <float ou null — preço alvo em 12 meses baseado em DDM>,
-  "stop_sugerido": <float ou null — preço de saída em caso de deterioração>,
-  "dy_alvo_minimo": <float % — DY mínimo que justifica a posição no cenário atual>,
   "tese": "<3-4 frases sintetizando toda a análise e o porquê da recomendação>",
   "gatilhos_compra": ["<condição que tornaria a compra mais clara>"],
   "gatilhos_saida": ["<condição que indicaria saída da posição>"],
@@ -513,9 +583,17 @@ Responda SOMENTE em JSON:
                 {"role": "user", "content": prompt},
             ],
             api_key=api_key,
-            max_tokens=700,
+            max_tokens=600,
         )
-        state.final_decision = _parse_json(raw)
+        llm_out = _parse_json(raw)
+        # Inject deterministic trade plan — overwrites any LLM attempt at prices
+        state.final_decision = {
+            **llm_out,
+            "preco_entrada_ideal": entry,
+            "preco_alvo_12m": target,
+            "stop_sugerido": stop,
+            "dy_alvo_minimo": dy_alvo_minimo,
+        }
         logger.info("[pipeline:%s] DecisionAgent OK → %s", state.ticker, state.final_decision.get("recomendacao"))
     except Exception as exc:
         logger.warning("[pipeline:%s] DecisionAgent failed: %s", state.ticker, exc)
@@ -523,10 +601,10 @@ Responda SOMENTE em JSON:
         state.final_decision = {
             "recomendacao": "AGUARDAR",
             "forca_sinal": "fraco",
-            "preco_entrada_ideal": None,
-            "preco_alvo_12m": ddm_preco_justo,
-            "stop_sugerido": None,
-            "dy_alvo_minimo": round(state.macro.get("cdi_anual", 10.65) + 1.5, 2),
+            "preco_entrada_ideal": entry,
+            "preco_alvo_12m": target,
+            "stop_sugerido": stop,
+            "dy_alvo_minimo": dy_alvo_minimo,
             "tese": "Análise parcial — alguns agentes falharam. Aguardar dados completos.",
             "gatilhos_compra": [],
             "gatilhos_saida": [],
