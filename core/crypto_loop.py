@@ -102,7 +102,7 @@ _CONFIG_FILE = Path("data/crypto_bot_config.json")
 _LOOP_INTERVAL = int(os.getenv("CRYPTO_LOOP_INTERVAL_SECONDS", "300"))
 _INITIAL_BALANCE = float(os.getenv("CRYPTO_INITIAL_BALANCE_USD", "1000.0"))
 _TOP_PAIRS_LIMIT = 15
-_PNL_SNAPSHOT_EVERY = 12
+_PNL_SNAPSHOT_EVERY = 288  # 288 × 300s = 24h — true daily summary
 # Skip a symbol when its last N trades show win rate below this threshold.
 _SYMBOL_WIN_RATE_WINDOW = int(os.getenv("CRYPTO_SYMBOL_WIN_RATE_WINDOW", "20"))
 _SYMBOL_MIN_WIN_RATE = float(os.getenv("CRYPTO_SYMBOL_MIN_WIN_RATE", "0.30"))
