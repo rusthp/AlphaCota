@@ -74,7 +74,7 @@ def _call_groq(
         raise RuntimeError("GROQ_API_KEY not configured")
 
     client = Groq(api_key=key)
-    resp = client.chat.completions.create(
+    resp = client.chat.completions.create(  # type: ignore[call-overload]
         model=model,
         messages=messages,
         temperature=temperature,
