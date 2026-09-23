@@ -6,14 +6,6 @@ class OperationalConfig(BaseSettings):
 
     database_path: str = "alphacota.db"
     groq_api_key: str = ""
-    openrouter_api_key: str = ""
-
-    # Polymarket operational settings
-    polymarket_mode: str = "paper"  # "paper" | "live"
-    polymarket_max_position_usd: float = 50.0
-    polymarket_max_daily_loss_usd: float = 10.0
-    polygon_rpc_url: str = ""  # Alchemy/Infura HTTPS endpoint
-    loop_interval_seconds: int = 300
 
     class Config:
         env_file = ".env"
@@ -25,10 +17,6 @@ class SecretConfig(BaseSettings):
     """Sensitive secrets — never log, never serialize to JSON."""
 
     secret_key: str = ""  # JWT signing key — must be set via env, never hardcoded
-    polymarket_api_key: str = ""
-    polymarket_api_secret: str = ""
-    polymarket_private_key_enc: str = ""  # AES-256-GCM encrypted private key (hex)
-    polygonscan_api_key: str = ""
 
     class Config:
         env_file = ".env"

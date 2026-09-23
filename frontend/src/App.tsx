@@ -22,7 +22,6 @@ import ClustersPage from "./pages/ClustersPage";
 import DividendCalendarPage from "./pages/DividendCalendarPage";
 import ComparePage from "./pages/ComparePage";
 import WatchlistPage from "./pages/WatchlistPage";
-import PolymarketPage from "./pages/PolymarketPage";
 import TerminalPage from "./pages/TerminalPage";
 import CryptoConfidencePage from "./pages/CryptoConfidencePage";
 
@@ -74,7 +73,6 @@ const App = () => (
             <Route path="calendar" element={<DividendCalendarPage />} />
             <Route path="compare" element={<ComparePage />} />
             <Route path="watchlist" element={<WatchlistPage />} />
-            <Route path="polymarket" element={<PolymarketPage />} />
             <Route path="terminal" element={<TerminalPage />} />
             <Route path="crypto-confidence" element={<CryptoConfidencePage />} />
           </Route>

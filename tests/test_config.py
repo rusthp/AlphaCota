@@ -13,10 +13,6 @@ class TestOperationalConfig:
         c = OperationalConfig()
         assert c.database_path == "alphacota.db"
 
-    def test_default_polymarket_mode(self):
-        c = OperationalConfig()
-        assert c.polymarket_mode == "paper"
-
     def test_env_override(self, monkeypatch):
         monkeypatch.setenv("DATABASE_PATH", "custom.db")
         c = OperationalConfig()
