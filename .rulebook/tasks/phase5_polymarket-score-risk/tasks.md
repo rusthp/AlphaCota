@@ -22,3 +22,8 @@
 - [x] 5.3 Write `tests/test_polymarket_decision_engine.py`: end-to-end with mocked sub-engines, reject propagates to size=0
 - [x] 5.4 Run `ruff check` + `mypy` on new files — zero errors
 - [x] 5.5 Run `pytest tests/test_polymarket_score.py tests/test_polymarket_risk.py tests/test_polymarket_decision_engine.py -v` — all pass
+
+## 6. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 6.1 Update or create documentation covering the implementation
+- [ ] 6.2 Write tests covering the new behavior
+- [ ] 6.3 Run tests and confirm they pass

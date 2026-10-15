@@ -28,3 +28,8 @@
 - [x] 7.4 Run `ruff check` + `mypy` on all new/modified files — zero errors
 - [x] 7.5 Run `pytest tests/test_polymarket_preflight.py tests/test_polymarket_executor.py tests/test_polymarket_observability.py -v` — all pass
 - [x] 7.6 Update `docs/` with live trader runbook: how to set env vars, how to verify preflight passes, how to use kill-switch, how to read observability logs
+
+## 8. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 8.1 Update or create documentation covering the implementation
+- [ ] 8.2 Write tests covering the new behavior
+- [ ] 8.3 Run tests and confirm they pass

@@ -1,14 +1,13 @@
 {
-  "version": "5.3.2",
-  "installedAt": "2026-03-15T21:54:17.613Z",
-  "updatedAt": "2026-04-08T18:19:49.317Z",
+  "version": "5.7.0",
+  "installedAt": "2026-04-08T18:19:47.018Z",
+  "updatedAt": "2026-05-16T20:50:12.156Z",
   "projectId": "alphacota",
   "mode": "full",
   "features": {
     "watcher": false,
     "agent": false,
     "logging": true,
-    "telemetry": false,
     "notifications": false,
     "dryRun": false,
     "gitHooks": true,
@@ -36,31 +35,6 @@
     "maxSizeBytes": 524288000,
     "autoCapture": true,
     "vectorDimensions": 256
-  },
-  "ralph": {
-    "enabled": true,
-    "maxIterations": 10,
-    "tool": "claude",
-    "maxContextLoss": 3,
-    "securityGate": {
-      "enabled": true,
-      "failOn": "high",
-      "tool": "auto"
-    },
-    "contextCompression": {
-      "enabled": true,
-      "recentCount": 3,
-      "threshold": 5
-    },
-    "parallel": {
-      "enabled": false,
-      "maxWorkers": 3
-    },
-    "planCheckpoint": {
-      "enabled": false,
-      "autoApproveAfterSeconds": 0,
-      "requireApprovalForStories": "all"
-    }
   },
   "skills": {
     "enabled": [

@@ -21,3 +21,8 @@
 - [x] 5.3 Write `tests/test_polymarket_ledger.py`: idempotent insert, reconcile updates status, WAL mode enabled
 - [x] 5.4 Run `ruff check` + `mypy core/polymarket_types.py core/polymarket_client.py core/polymarket_ledger.py` — zero errors
 - [x] 5.5 Run `pytest tests/test_polymarket_*.py -v` — all pass
+
+## 6. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 6.1 Update or create documentation covering the implementation
+- [ ] 6.2 Write tests covering the new behavior
+- [ ] 6.3 Run tests and confirm they pass

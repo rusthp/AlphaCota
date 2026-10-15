@@ -15,3 +15,8 @@
 - [x] 4.1 Write `tests/test_ai_engine_polymarket.py`: mock OpenRouter responses, test JSON validation guardrail rejects bad output, test retry on first failure, test None on second failure
 - [x] 4.2 Run `ruff check` + `mypy core/ai_engine.py` — zero errors
 - [x] 4.3 Run `pytest tests/test_ai_engine_polymarket.py -v` — all pass
+
+## 5. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 5.1 Update or create documentation covering the implementation
+- [ ] 5.2 Write tests covering the new behavior
+- [ ] 5.3 Run tests and confirm they pass

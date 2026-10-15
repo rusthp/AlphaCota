@@ -19,3 +19,8 @@
 - [x] 5.3 Write `tests/test_rate_limiter.py`: burst allowed, limit enforced, refill over time
 - [x] 5.4 Run `ruff check` + `mypy core/secrets_vault.py core/audit_log.py core/rate_limiter.py` — zero errors
 - [x] 5.5 Run `pytest tests/test_secrets_vault.py tests/test_audit_log.py tests/test_rate_limiter.py -v` — all pass
+
+## 6. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 6.1 Update or create documentation covering the implementation
+- [ ] 6.2 Write tests covering the new behavior
+- [ ] 6.3 Run tests and confirm they pass

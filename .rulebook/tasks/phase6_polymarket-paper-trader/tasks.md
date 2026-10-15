@@ -27,3 +27,8 @@
 - [x] 6.4 Run `ruff check` + `mypy` on all new files — zero errors
 - [x] 6.5 Run `pytest tests/test_polymarket_paper_executor.py tests/test_polymarket_exit_engine.py tests/test_polymarket_loop.py -v` — all pass
 - [x] 6.6 Run full paper loop for 3 iterations in CI (`python -m core.polymarket_loop --mode=paper --iterations=3`) — exits cleanly with no exceptions
+
+## 7. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 7.1 Update or create documentation covering the implementation
+- [ ] 7.2 Write tests covering the new behavior
+- [ ] 7.3 Run tests and confirm they pass

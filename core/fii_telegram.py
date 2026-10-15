@@ -226,17 +226,29 @@ def notify_fii_ranking(
     sector_map: dict[str, str] | None = None,
     score_deltas: dict[str, float | None] | None = None,
     macro_line: str = "",
+    confidence_map: dict[str, float] | None = None,
+    min_confidence: float = 0.60,
 ) -> None:
-    """Send daily top-N overall ranking + per-sector top-3 breakdown."""
+    """Send daily top-N overall ranking + per-sector top-3 breakdown.
+
+    FIIs with data confidence below `min_confidence` (missing debt_ratio,
+    vacancy_rate, etc.) are pushed out of the "melhores para investir" top-N
+    so the ranking never spotlights a fund whose score rests on incomplete
+    fundamentals — they still appear in the per-sector breakdown below.
+    """
     deltas = score_deltas or {}
     smap = sector_map or {}
+    conf_map = confidence_map or {}
+
+    reliable = [f for f in ranked if conf_map.get(f.get("ticker", ""), 1.0) >= min_confidence]
+    pool = reliable if reliable else ranked
 
     # --- Overall top-N ---
     lines = [
-        f"📋 <b>TOP {top_n} FIIs — AlphaCota</b>",
+        f"📋 <b>TOP {top_n} FIIs PARA INVESTIR — AlphaCota</b>",
         "━━━━━━━━━━━━━━━━━━━",
     ]
-    for i, fii in enumerate(ranked[:top_n], 1):
+    for i, fii in enumerate(pool[:top_n], 1):
         ticker = fii.get("ticker", "?")
         score = fii.get("alpha_score", 0.0)
         dy = fii.get("dividend_yield", 0.0)
@@ -244,10 +256,15 @@ def notify_fii_ranking(
         d30 = deltas.get(ticker)
         emoji = _score_emoji(score)
         momentum = f" {_delta_str(d30)}" if d30 is not None else ""
+        conf = conf_map.get(ticker, 1.0)
+        conf_flag = "" if conf >= min_confidence else " ⚠️"
+        sec_icon = _sector_icon(smap.get(ticker, "")) + " " if smap.get(ticker) else ""
         lines.append(
-            f"{i}. {emoji} <b>{ticker}</b>  Score: <b>{score:.0f}</b>{momentum}"
-            f"  DY: {dy*100:.1f}%  P/VP: {pvp:.2f}"
+            f"{i}. {emoji} {sec_icon}<b>{ticker}</b>  Score: <b>{score:.0f}</b>{momentum}"
+            f"  DY: {dy*100:.1f}%  P/VP: {pvp:.2f}{conf_flag}"
         )
+    if conf_map and any(conf_map.get(f.get("ticker", ""), 1.0) < min_confidence for f in pool[:top_n]):
+        lines.append("⚠️ dado fundamentalista incompleto (vacância/dívida ausente)")
 
     # --- Per-sector top-3 ---
     if smap and ranked:

@@ -550,12 +550,18 @@ def _run_iteration(state: dict, iteration: int) -> dict:
     # --- Daily ranking (once per day at first iteration) ---
     today = time.strftime("%Y-%m-%d")
     if state.get("last_ranking_date") != today:
+        confidence_map = {
+            fii["ticker"]: _data_confidence(sanitized_funds.get(fii["ticker"], {}), fii)
+            for fii in ranked
+        }
         logger.info("fii_loop: sending daily ranking top-5")
         notify_fii_ranking(
             ranked, top_n=5,
             sector_map=sector_map,
             score_deltas=score_deltas,
             macro_line=m_line,
+            confidence_map=confidence_map,
+            min_confidence=_MIN_DATA_CONFIDENCE,
         )
         state["last_ranking_date"] = today
 

@@ -34,3 +34,8 @@
 - [x] 7.4 Write `tests/test_polymarket_wallet_ranker.py`: wallet below 55% win rate demoted; wallet above 65% promoted; wallet with <5 resolved markets excluded from ranking
 - [x] 7.5 Run `ruff check` + `mypy` on all new/modified files — zero errors
 - [x] 7.6 Run `pytest tests/test_polymarket_discovery.py tests/test_polymarket_calibration.py tests/test_polymarket_weight_tuner.py tests/test_polymarket_wallet_ranker.py -v` — all pass
+
+## 8. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 8.1 Update or create documentation covering the implementation
+- [ ] 8.2 Write tests covering the new behavior
+- [ ] 8.3 Run tests and confirm they pass

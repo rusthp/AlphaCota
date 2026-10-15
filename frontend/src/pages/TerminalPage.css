@@ -1,0 +1,11 @@
+.terminal-root {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+
+.terminal-chart-area {
+  height: 55%;
+}
+
+.ob-bar-bid { width: var(--ob-w, 0%); }
+.ob-bar-ask { width: var(--ob-w, 0%); }
+.ob-bar-imb { width: var(--ob-w, 0%); }

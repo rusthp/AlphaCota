@@ -19,3 +19,8 @@
 - [x] 5.3 Write `tests/test_polymarket_copy_signal.py`: consensus calculation, no-positions returns none direction
 - [x] 5.4 Run `ruff check` + `mypy` on new files — zero errors
 - [x] 5.5 Run `pytest tests/test_polymarket_wallet_tracker.py tests/test_polymarket_alpha_detector.py tests/test_polymarket_copy_signal.py -v` — all pass
+
+## 6. Tail (mandatory — enforced by rulebook v5.3.0)
+- [ ] 6.1 Update or create documentation covering the implementation
+- [ ] 6.2 Write tests covering the new behavior
+- [ ] 6.3 Run tests and confirm they pass
